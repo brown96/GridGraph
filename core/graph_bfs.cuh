@@ -18,6 +18,9 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
+#define N ((long)1024*1024*1024)
+#define BS 1024
+
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -50,6 +53,78 @@ void f_none_1(std::pair<VertexId,VertexId> vid_range) {
 
 void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,VertexId> target_vid_range) {
 
+}
+
+template <typename T>
+__global__ void process_v(int value_d, int partition_batch, int current_partition, int partitions, int vertices, T zero) {
+	int i = blockIdx.x;
+	if (i >= partition_batch) return;
+	int partition_id = i + current_partition;
+	if (partition_id < partitions) {
+		__shared__ T local_value = zero;
+		int begin_vid, end_vid;
+		// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
+		const int split_partition = vertices % partitions;
+        const int partition_size = vertices / partitions + 1;
+        if (partition_id < split_partition) {
+                begin_vid = partition_id * partition_size;
+                end_vid = (partition_id + 1) * partition_size;
+        }
+        const int split_point = split_partition * partition_size;
+        begin_vid = split_point + (partition_id - split_partition) * (partition_size - 1);
+        end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
+		//
+		int j = threadIdx.x + begin_vid;
+		local_value += (parent[j] != -1);
+	}
+    __syncthreads();
+    if (blockIdx.x * blockDim.x + threadIdx.x == 0) value_d = local_value;
+    return;
+}
+
+template <typename T>
+__global__ void process_v_bitmap(int value_d, int partitions, int vertices, T zero) {
+	int partition_id = blockIdx.x;
+	if (partition_id >= partitions) return;
+	__shared__ T local_value = zero;
+	int begin_vid, end_vid;
+	// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
+	const int split_partition = vertices % partitions;
+    const int partition_size = vertices / partitions + 1;
+    if (partition_id < split_partition) {
+            begin_vid = partition_id * partition_size;
+            end_vid = (partition_id + 1) * partition_size;
+    }
+    const int split_point = split_partition * partition_size;
+    begin_vid = split_point + (partition_id - split_partition) * (partition_size - 1);
+    end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
+	//
+    int i = begin_vid;
+	while (i<end_vid) {
+		unsigned long word = bitmap->data[WORD_OFFSET(i)];
+		if (word==0) {
+			i = (WORD_OFFSET(i) + 1) << 6;
+			continue;
+		}
+		size_t j = BIT_OFFSET(i);
+		word = word >> j;
+		while (word!=0) {
+			if (word & 1) {
+				local_value += process(i);
+			}
+			i++;
+			j++;
+			word = word >> 1;
+			if (i==end_vid) break;
+		}
+		i += (64 - j);
+	}
+	write_add(&value, local_value);
+	int j = threadIdx.x + begin_vid;
+	local_value += (parent[i] != -1);
+    __syncthreads();
+    if (blockIdx.x * blockDim.x + threadIdx.x == 0) value_d = local_value;
+    return;
 }
 
 class Graph {
@@ -149,7 +224,7 @@ public:
 	}
 
 	template <typename T>
-	T stream_vertices(std::function<T(VertexId)> process, Bitmap * bitmap = nullptr, T zero = 0,
+	T stream_vertices(BigVector<VertexId> parent, Bitmap * bitmap = nullptr, T zero = 0,
 		std::function<void(std::pair<VertexId,VertexId>)> pre = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId>)> post = f_none_1) {
 		T value = zero;
@@ -163,22 +238,29 @@ public:
 					end_vid = get_partition_range(vertices, partitions, cur_partition+partition_batch).first;
 				}
 				pre(std::make_pair(begin_vid, end_vid));
-				#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
-				for (int partition_id=cur_partition;partition_id<cur_partition+partition_batch;partition_id++) {
-					if (partition_id < partitions) {
-						T local_value = zero;
-						VertexId begin_vid, end_vid;
-						std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-						for (VertexId i=begin_vid;i<end_vid;i++) {
-							local_value += process(i);
-						}
-						write_add(&value, local_value);
-					}
-				}
-				#pragma omp barrier
+
+                int value_d;
+				int value = (int)malloc(sizeof(int));
+                value = 0;
+                cudaMalloc((void**)&value_d, sizeof(int));
+                cudaMemcpy(value_d, value, sizeof(int), cudaMemcpyHostToDevice);
+                process_v<T><<<(N+BS-1)/BS, BS>>>(value_d, partition_batch, current_partition, partitions, vertices, zero);
+                cudaMemcpy(value, value_d, sizeof(int), cudaMemcpyDeviceToHost);
+
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
+            if (bitmap==nullptr) {
+                int value_d;
+				int value = (int)malloc(sizeof(int));
+                value = 0;
+                cudaMalloc((void**)&value_d, sizeof(int));
+                cudaMemcpy(value_d, value, sizeof(int), cudaMemcpyHostToDevice);
+                process_v<T><<<(N+BS-1)/BS, BS>>>(value_d, partitions, 0, partitions, vertices, zero);
+                cudaMemcpy(value, value_d, sizeof(int), cudaMemcpyDeviceToHost);
+            } else {
+
+            }
 			#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
 			for (int partition_id=0;partition_id<partitions;partition_id++) {
 				T local_value = zero;

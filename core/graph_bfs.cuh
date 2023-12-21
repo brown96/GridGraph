@@ -56,37 +56,42 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_v(int value_d, int partition_batch, int current_partition, int partitions, int vertices, T zero) {
+__global__ void process_v(T value, T *parent_data_d, int partition_batch, int cur_partition, int partitions, int vertices, T zero) {
 	int i = blockIdx.x;
 	if (i >= partition_batch) return;
-	int partition_id = i + current_partition;
+	int partition_id = i + cur_partition;
+	__shared__ T local_value;
 	if (partition_id < partitions) {
-		__shared__ T local_value = zero;
+		local_value = zero;
 		int begin_vid, end_vid;
 		// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 		const int split_partition = vertices % partitions;
         const int partition_size = vertices / partitions + 1;
         if (partition_id < split_partition) {
                 begin_vid = partition_id * partition_size;
-                end_vid = (partition_id + 1) * partition_size;
+				end_vid = (partition_id + 1) * partition_size;
         }
         const int split_point = split_partition * partition_size;
         begin_vid = split_point + (partition_id - split_partition) * (partition_size - 1);
-        end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
+		end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
 		//
 		int j = threadIdx.x + begin_vid;
-		local_value += (parent[j] != -1);
+		if (j >= end_vid) return;
+		local_value += (parent_data_d[j] != -1);
 	}
     __syncthreads();
-    if (blockIdx.x * blockDim.x + threadIdx.x == 0) value_d = local_value;
+    for (int i = 0; i < blockIdx.x; i++) {
+		value += local_value;
+	}
     return;
 }
 
 template <typename T>
-__global__ void process_v_bitmap(int value_d, int partitions, int vertices, T zero) {
+__global__ void process_v_bitmap(T value, T *parent_data_d, unsigned long *words_d, int partitions, int vertices, T zero) {
 	int partition_id = blockIdx.x;
 	if (partition_id >= partitions) return;
-	__shared__ T local_value = zero;
+	__shared__ T local_value;
+	local_value = zero;
 	int begin_vid, end_vid;
 	// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 	const int split_partition = vertices % partitions;
@@ -101,16 +106,16 @@ __global__ void process_v_bitmap(int value_d, int partitions, int vertices, T ze
 	//
     int i = begin_vid;
 	while (i<end_vid) {
-		unsigned long word = bitmap->data[WORD_OFFSET(i)];
+		unsigned long word = words_d[i >> 6];
 		if (word==0) {
-			i = (WORD_OFFSET(i) + 1) << 6;
+			i = ((i >> 6) + 1) << 6;
 			continue;
 		}
-		size_t j = BIT_OFFSET(i);
+		size_t j = i & 0x3f;
 		word = word >> j;
 		while (word!=0) {
 			if (word & 1) {
-				local_value += process(i);
+				local_value += (parent_data_d[i] != -1);
 			}
 			i++;
 			j++;
@@ -119,11 +124,10 @@ __global__ void process_v_bitmap(int value_d, int partitions, int vertices, T ze
 		}
 		i += (64 - j);
 	}
-	write_add(&value, local_value);
-	int j = threadIdx.x + begin_vid;
-	local_value += (parent[i] != -1);
-    __syncthreads();
-    if (blockIdx.x * blockDim.x + threadIdx.x == 0) value_d = local_value;
+	__syncthreads();
+	for (int i = 0; i < blockIdx.x; i++) {
+		value += local_value;
+	}
     return;
 }
 
@@ -239,62 +243,36 @@ public:
 				}
 				pre(std::make_pair(begin_vid, end_vid));
 
-                int value_d;
-				int value = (int)malloc(sizeof(int));
-                value = 0;
-                cudaMalloc((void**)&value_d, sizeof(int));
-                cudaMemcpy(value_d, value, sizeof(int), cudaMemcpyHostToDevice);
-                process_v<T><<<(N+BS-1)/BS, BS>>>(value_d, partition_batch, current_partition, partitions, vertices, zero);
-                cudaMemcpy(value, value_d, sizeof(int), cudaMemcpyDeviceToHost);
+				T *parent_data_d;
+				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
+				parent_data = parent.data;
+				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
+				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
+                process_v<T><<<(N+BS-1)/BS, BS>>>(value, parent_data_d, partition_batch, cur_partition, partitions, vertices, zero);
 
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
             if (bitmap==nullptr) {
-                int value_d;
-				int value = (int)malloc(sizeof(int));
-                value = 0;
-                cudaMalloc((void**)&value_d, sizeof(int));
-                cudaMemcpy(value_d, value, sizeof(int), cudaMemcpyHostToDevice);
-                process_v<T><<<(N+BS-1)/BS, BS>>>(value_d, partitions, 0, partitions, vertices, zero);
-                cudaMemcpy(value, value_d, sizeof(int), cudaMemcpyDeviceToHost);
+				T *parent_data_d;
+				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
+				parent_data = parent.data;
+				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
+				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
+                process_v<T><<<(N+BS-1)/BS, BS>>>(value, parent_data_d, partitions, 0, partitions, vertices, zero);
             } else {
-
+				T *parent_data_d;
+				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
+				parent_data = parent.data;
+				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
+				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
+				unsigned long *words_d;
+				unsigned long *words = (unsigned long*)malloc(sizeof(unsigned long)*bitmap->size);
+				words = bitmap->data;
+				cudaMalloc((void**)&words_d, sizeof(unsigned long)*bitmap->size);
+				cudaMemcpy(words_d, words, sizeof(unsigned long)*bitmap->size, cudaMemcpyHostToDevice);
+				process_v_bitmap<T><<<(N+BS-1)/BS, BS>>>(value, parent_data_d, words_d, partitions, vertices, zero);
             }
-			#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
-			for (int partition_id=0;partition_id<partitions;partition_id++) {
-				T local_value = zero;
-				VertexId begin_vid, end_vid;
-				std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-				if (bitmap==nullptr) {
-					for (VertexId i=begin_vid;i<end_vid;i++) {
-						local_value += process(i);
-					}
-				} else {
-					VertexId i = begin_vid;
-					while (i<end_vid) {
-						unsigned long word = bitmap->data[WORD_OFFSET(i)];
-						if (word==0) {
-							i = (WORD_OFFSET(i) + 1) << 6;
-							continue;
-						}
-						size_t j = BIT_OFFSET(i);
-						word = word >> j;
-						while (word!=0) {
-							if (word & 1) {
-								local_value += process(i);
-							}
-							i++;
-							j++;
-							word = word >> 1;
-							if (i==end_vid) break;
-						}
-						i += (64 - j);
-					}
-				}
-				write_add(&value, local_value);
-			}
-			#pragma omp barrier
 		}
 		return value;
 	}

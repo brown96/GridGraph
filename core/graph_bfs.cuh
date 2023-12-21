@@ -56,7 +56,7 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_v(T value, T *parent_data_d, int partition_batch, int cur_partition, int partitions, int vertices, T zero) {
+__global__ void process_v(T *value, T *parent_data_d, int partition_batch, int cur_partition, int partitions, int vertices, T zero) {
 	int i = blockIdx.x;
 	if (i >= partition_batch) return;
 	int partition_id = i + cur_partition;
@@ -80,14 +80,14 @@ __global__ void process_v(T value, T *parent_data_d, int partition_batch, int cu
 		local_value += (parent_data_d[j] != -1);
 	}
     __syncthreads();
-    for (int i = 0; i < blockIdx.x; i++) {
-		value += local_value;
+    if (i == 0) {
+		T old = atomicAdd(value, local_value);
 	}
     return;
 }
 
 template <typename T>
-__global__ void process_v_bitmap(T value, T *parent_data_d, unsigned long *words_d, int partitions, int vertices, T zero) {
+__global__ void process_v_bitmap(T *value, T *parent_data_d, unsigned long *words_d, int partitions, int vertices, T zero) {
 	int partition_id = blockIdx.x;
 	if (partition_id >= partitions) return;
 	__shared__ T local_value;
@@ -125,8 +125,8 @@ __global__ void process_v_bitmap(T value, T *parent_data_d, unsigned long *words
 		i += (64 - j);
 	}
 	__syncthreads();
-	for (int i = 0; i < blockIdx.x; i++) {
-		value += local_value;
+	if (i == 0) {
+		T old = atomicAdd(value, local_value);
 	}
     return;
 }
@@ -248,7 +248,7 @@ public:
 				parent_data = parent.data;
 				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
 				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
-                process_v<T><<<(N+BS-1)/BS, BS>>>(value, parent_data_d, partition_batch, cur_partition, partitions, vertices, zero);
+                process_v<T><<<(N+BS-1)/BS, BS>>>(&value, parent_data_d, partition_batch, cur_partition, partitions, vertices, zero);
 
 				post(std::make_pair(begin_vid, end_vid));
 			}
@@ -259,7 +259,7 @@ public:
 				parent_data = parent.data;
 				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
 				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
-                process_v<T><<<(N+BS-1)/BS, BS>>>(value, parent_data_d, partitions, 0, partitions, vertices, zero);
+                process_v<T><<<(N+BS-1)/BS, BS>>>(&value, parent_data_d, partitions, 0, partitions, vertices, zero);
             } else {
 				T *parent_data_d;
 				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
@@ -271,7 +271,7 @@ public:
 				words = bitmap->data;
 				cudaMalloc((void**)&words_d, sizeof(unsigned long)*bitmap->size);
 				cudaMemcpy(words_d, words, sizeof(unsigned long)*bitmap->size, cudaMemcpyHostToDevice);
-				process_v_bitmap<T><<<(N+BS-1)/BS, BS>>>(value, parent_data_d, words_d, partitions, vertices, zero);
+				process_v_bitmap<T><<<(N+BS-1)/BS, BS>>>(&value, parent_data_d, words_d, partitions, vertices, zero);
             }
 		}
 		return value;

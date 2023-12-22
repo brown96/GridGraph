@@ -27,8 +27,8 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include <thread>
 #include <string>
 
-#include "core/filesystem.hpp"
-#include "core/partition.hpp"
+#include "filesystem.hpp"
+#include "partition.hpp"
 
 void *memalign(size_t alignment, size_t size) {
 	void *ret;

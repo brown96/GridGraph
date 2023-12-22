@@ -34,14 +34,14 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include <vector>
 #include <functional>
 
-#include "core/constants.hpp"
-#include "core/type.hpp"
-#include "core/bitmap.hpp"
-#include "core/atomic.hpp"
-#include "core/queue.hpp"
-#include "core/partition.hpp"
-#include "core/bigvector.hpp"
-#include "core/time.hpp"
+#include "constants.hpp"
+#include "type.hpp"
+#include "bitmap.hpp"
+#include "atomic.hpp"
+#include "queue.hpp"
+#include "partition.hpp"
+#include "bigvector.hpp"
+#include "time.hpp"
 
 bool f_true(VertexId v) {
 	return true;
@@ -56,33 +56,11 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_v(T *value, T *parent_data_d, int partition_batch, int cur_partition, int partitions, int vertices, T zero) {
-	int i = blockIdx.x;
-	if (i >= partition_batch) return;
-	int partition_id = i + cur_partition;
-	__shared__ T local_value;
-	if (partition_id < partitions) {
-		local_value = zero;
-		int begin_vid, end_vid;
-		// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-		const int split_partition = vertices % partitions;
-        const int partition_size = vertices / partitions + 1;
-        if (partition_id < split_partition) {
-                begin_vid = partition_id * partition_size;
-				end_vid = (partition_id + 1) * partition_size;
-        }
-        const int split_point = split_partition * partition_size;
-        begin_vid = split_point + (partition_id - split_partition) * (partition_size - 1);
-		end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
-		//
-		int j = threadIdx.x + begin_vid;
-		if (j >= end_vid) return;
-		local_value += (parent_data_d[j] != -1);
-	}
-    __syncthreads();
-    if (i == 0) {
-		T old = atomicAdd(value, local_value);
-	}
+__global__ void process_v(T *value_d, T *parent_data_d, int begin_vid, int end_vid, T zero) {
+	int i = blockIdx.x * blockDim.x + threadIdx.x;
+	if (i >= end_vid - begin_vid) return;
+	__shared__ T local_values[BS];
+	printf("process = %d\n", (parent_data_d[i] != -1));
     return;
 }
 
@@ -97,32 +75,28 @@ __global__ void process_v_bitmap(T *value, T *parent_data_d, unsigned long *word
 	const int split_partition = vertices % partitions;
     const int partition_size = vertices / partitions + 1;
     if (partition_id < split_partition) {
-            begin_vid = partition_id * partition_size;
-            end_vid = (partition_id + 1) * partition_size;
+        begin_vid = partition_id * partition_size;
+        end_vid = (partition_id + 1) * partition_size;
     }
     const int split_point = split_partition * partition_size;
     begin_vid = split_point + (partition_id - split_partition) * (partition_size - 1);
     end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
 	//
-    int i = begin_vid;
-	while (i<end_vid) {
-		unsigned long word = words_d[i >> 6];
-		if (word==0) {
-			i = ((i >> 6) + 1) << 6;
-			continue;
+    int i = threadIdx.x + begin_vid;
+	if (i >= end_vid) return;
+	unsigned long word = words_d[i >> 6];
+	if (word == 0) return;
+	size_t j = i & 0x3f;
+	word = word >> j;
+	if(word != 0 && word & 1) local_value += (parent_data_d[i] != -1);
+	while (word!=0) {
+		if (word & 1) {
+			local_value += (parent_data_d[i] != -1);
 		}
-		size_t j = i & 0x3f;
-		word = word >> j;
-		while (word!=0) {
-			if (word & 1) {
-				local_value += (parent_data_d[i] != -1);
-			}
-			i++;
-			j++;
-			word = word >> 1;
-			if (i==end_vid) break;
-		}
-		i += (64 - j);
+		i++;
+		j++;
+		word = word >> 1;
+		if (i==end_vid) break;
 	}
 	__syncthreads();
 	if (i == 0) {
@@ -231,7 +205,9 @@ public:
 	T stream_vertices(BigVector<VertexId> parent, Bitmap * bitmap = nullptr, T zero = 0,
 		std::function<void(std::pair<VertexId,VertexId>)> pre = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId>)> post = f_none_1) {
-		T value = zero;
+		T value_all = zero;
+		T *value = (T*)malloc(sizeof(T));
+		*value = zero;
 		if (bitmap==nullptr && vertex_data_bytes > (0.8 * memory_bytes)) {
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
 				VertexId begin_vid, end_vid;
@@ -242,25 +218,50 @@ public:
 					end_vid = get_partition_range(vertices, partitions, cur_partition+partition_batch).first;
 				}
 				pre(std::make_pair(begin_vid, end_vid));
-
-				T *parent_data_d;
-				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
-				parent_data = parent.data;
-				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
-				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
-                process_v<T><<<(N+BS-1)/BS, BS>>>(&value, parent_data_d, partition_batch, cur_partition, partitions, vertices, zero);
-
+				for (int partition_id=cur_partition;partition_id<cur_partition+partition_batch;partition_id++) {
+					if (partition_id < partitions) {
+						VertexId begin_vid, end_vid;
+						std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
+						T *value_d;
+						cudaMalloc((void**)&value_d, sizeof(T));
+						cudaMemcpy(value_d, value, sizeof(T), cudaMemcpyHostToDevice);
+						T *parent_data_d;
+						T *parent_data = (T*)malloc(sizeof(T)*(vertices/partitions + 1));
+						parent_data = parent.data + begin_vid;
+						cudaMalloc((void**)&parent_data_d, sizeof(T)*(vertices/partitions + 1));
+						cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(vertices/partitions + 1), cudaMemcpyHostToDevice);
+                		process_v<T><<<(N+BS-1)/BS, BS>>>(value_d, parent_data_d, begin_vid, end_vid, zero);
+						cudaDeviceSynchronize();
+						cudaMemcpy(value, value_d, sizeof(T), cudaMemcpyDeviceToHost);
+						value_all += *value;
+						*value = zero;
+					}
+				}
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
             if (bitmap==nullptr) {
-				T *parent_data_d;
-				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
-				parent_data = parent.data;
-				cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
-				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
-                process_v<T><<<(N+BS-1)/BS, BS>>>(&value, parent_data_d, partitions, 0, partitions, vertices, zero);
+				for (int partition_id=0;partition_id<partitions;partition_id++) {
+					VertexId begin_vid, end_vid;
+					std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
+					T *value_d;
+					cudaMalloc((void**)&value_d, sizeof(T));
+					cudaMemcpy(value_d, value, sizeof(T), cudaMemcpyHostToDevice);
+					T *parent_data_d;
+					T *parent_data = (T*)malloc(sizeof(T)*(vertices/partitions + 1));
+					parent_data = parent.data + begin_vid;
+					cudaMalloc((void**)&parent_data_d, sizeof(T)*(vertices/partitions + 1));
+					cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(vertices/partitions + 1), cudaMemcpyHostToDevice);
+                	process_v<T><<<(N+BS-1)/BS, BS>>>(value_d, parent_data_d, begin_vid, end_vid, zero);
+					cudaDeviceSynchronize();
+					cudaMemcpy(value, value_d, sizeof(T), cudaMemcpyDeviceToHost);
+					value_all += *value;
+					*value = zero;
+				}
             } else {
+				T *value_d;
+				cudaMalloc((void**)&value_d, sizeof(T));
+				cudaMemcpy(value_d, value, sizeof(T), cudaMemcpyHostToDevice);
 				T *parent_data_d;
 				T *parent_data = (T*)malloc(sizeof(T)*parent.length);
 				parent_data = parent.data;
@@ -271,10 +272,11 @@ public:
 				words = bitmap->data;
 				cudaMalloc((void**)&words_d, sizeof(unsigned long)*bitmap->size);
 				cudaMemcpy(words_d, words, sizeof(unsigned long)*bitmap->size, cudaMemcpyHostToDevice);
-				process_v_bitmap<T><<<(N+BS-1)/BS, BS>>>(&value, parent_data_d, words_d, partitions, vertices, zero);
+				process_v_bitmap<T><<<(N+BS-1)/BS, BS>>>(value_d, parent_data_d, words_d, partitions, vertices, zero);
+				cudaMemcpy(value, value_d, sizeof(T), cudaMemcpyDeviceToHost);
             }
 		}
-		return value;
+		return *value;
 	}
 
 	void set_partition_batch(long bytes) {

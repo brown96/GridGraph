@@ -56,33 +56,13 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_v(T *g_idata, T *g_odata, int begin_vid, int end_vid) {
-	int tid = threadIdx.x;
-	int idx = blockIdx.x * blockDim.x + threadIdx.x;
-
-	T *idata = g_idata + blockIdx.x * blockDim.x;
-
-	if (idx >= end_vid - begin_vid) return;
-
-	for (int stride = 1; stride < blockDim.x; stride *= 2) {
-		if ((tid % (2 * stride)) == 0) {
-			idata[tid] += (idata[tid + stride] != -1);
-		}
-		__syncthreads();
-	}
-
-	if (tid == 0) g_odata[blockIdx.x] = idata[0];
-    return;
-}
-
-__global__ void reduceInterleaved (int *g_idata, int *g_odata, unsigned int n)
-{
+__global__ void process_v(T *g_idata, T *g_odata, unsigned int n) {
     // set thread ID
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     // convert global data pointer to the local pointer of this block
-    int *idata = g_idata + blockIdx.x * blockDim.x;
+    T *idata = g_idata + blockIdx.x * blockDim.x;
 
     // boundary check
     if(idx >= n) return;
@@ -260,13 +240,16 @@ public:
 						std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 						T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
 						T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
-						h_idata = parent.data + begin_vid;
+						// h_idata = parent.data + begin_vid;
+						for (int i = 0; i < end_vid - begin_vid; i++) {
+							h_idata[i] = (parent.data[i + begin_vid] != -1);
+						}
 						T *d_idata = NULL;
 						T *d_odata = NULL;
 						cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
 						cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
 						cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
-                		process_v<T><<<((N+BS-1)/BS), BS>>>(d_idata, d_odata, begin_vid, end_vid);
+                		process_v<T><<<((N+BS-1)/BS), BS>>>(d_idata, d_odata, end_vid - begin_vid);
 						cudaDeviceSynchronize();
 						cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 						for (int i = 0; i < ((N+BS-1)/BS); i++)  value += h_odata[i];
@@ -290,13 +273,10 @@ public:
 					cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
 					cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
 					cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
-                	reduceInterleaved<<<(N+BS-1)/BS, BS>>>(d_idata, d_odata, end_vid - begin_vid);
+                	process_v<<<(N+BS-1)/BS, BS>>>(d_idata, d_odata, end_vid - begin_vid);
 					cudaDeviceSynchronize();
 					cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
-					for (int i = 0; i < (N+BS-1)/BS; i++) {
-						if (h_odata[i] != 0) printf("h_odata[%d]=%d\n", i, h_odata[i]);
-						value += h_odata[i];
-					}
+					for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
 				}
             } else {
 				// T *value_d;

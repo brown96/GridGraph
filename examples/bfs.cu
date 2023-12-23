@@ -16,16 +16,11 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
 
 #include "../core/graph_bfs.cuh"
 
-__global__ void test_gpu() {
-	if (blockIdx.x*blockDim.x + threadIdx.x == 0) printf("カーネルで呼び出されました。\n");
-}
-
 int main(int argc, char ** argv) {
 	if (argc<3) {
 		fprintf(stderr, "usage: bfs [path] [start vertex id] [memory budget in GB]\n");
 		exit(-1);
 	}
-	test_gpu<<<4, 8>>>();
 	std::string path = argv[1];
 	VertexId start_vid = atoi(argv[2]);
 	long memory_bytes = (argc>=4)?atol(argv[3])*1024l*1024l*1024l:8l*1024l*1024l*1024l;

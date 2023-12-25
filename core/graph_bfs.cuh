@@ -61,11 +61,21 @@ __global__ void process_v(T *g_idata, T *g_odata, unsigned int n) {
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-    // convert global data pointer to the local pointer of this block
-    T *idata = g_idata + blockIdx.x * blockDim.x;
+	__shared__ T idata[BS];
 
     // boundary check
-    if(idx >= n) return;
+    if(idx >= ((n+BS-1)/BS)*BS) return;
+
+	if(idx < n) {
+		idata[tid] = (g_idata[tid + blockIdx.x * blockDim.x] != -1);
+	}
+	else {
+		idata[tid] = 0;
+	}
+
+	__syncthreads();
+
+	if (idx >= n) return;
 
     // in-place reduction in global memory
     for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
@@ -240,10 +250,7 @@ public:
 						std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 						T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
 						T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
-						// h_idata = parent.data + begin_vid;
-						for (int i = 0; i < end_vid - begin_vid; i++) {
-							h_idata[i] = (parent.data[i + begin_vid] != -1);
-						}
+						h_idata = parent.data + begin_vid;
 						T *d_idata = NULL;
 						T *d_odata = NULL;
 						cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
@@ -264,10 +271,7 @@ public:
 					std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 					T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
 					T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
-					// h_idata = parent.data + begin_vid;
-					for (int i = 0; i < end_vid - begin_vid; i++) {
-						h_idata[i] = (parent.data[i + begin_vid] != -1);
-					}
+					h_idata = parent.data + begin_vid;
 					T *d_idata = NULL;
 					T *d_odata = NULL;
 					cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
@@ -276,6 +280,7 @@ public:
                 	process_v<<<(N+BS-1)/BS, BS>>>(d_idata, d_odata, end_vid - begin_vid);
 					cudaDeviceSynchronize();
 					cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+					cudaDeviceSynchronize();
 					for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
 				}
             } else {

@@ -216,11 +216,11 @@ public:
 						cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
 						cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
                 		process_v<T><<<((N+BS-1)/BS), BS>>>(d_idata, d_odata, end_vid - begin_vid);
-						cudaDeviceSynchronize();
 						cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 						for (int i = 0; i < ((N+BS-1)/BS); i++)  value += h_odata[i];
 					}
 				}
+				cudaDeviceSynchronize();
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
@@ -237,11 +237,10 @@ public:
 					cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
 					cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
                 	process_v<<<(N+BS-1)/BS, BS>>>(d_idata, d_odata, end_vid - begin_vid);
-					cudaDeviceSynchronize();
 					cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
-					cudaDeviceSynchronize();
 					for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
 				}
+				cudaDeviceSynchronize();
             }
 		}
 		return value;

@@ -67,7 +67,7 @@ __global__ void process_v(T *g_idata, T *g_odata, unsigned int n) {
     if(idx >= ((n+BS-1)/BS)*BS) return;
 
 	if(idx < n) {
-		idata[tid] = (g_idata[tid + blockIdx.x * blockDim.x] != -1);
+		idata[tid] = (g_idata[idx] != -1);
 	}
 	else {
 		idata[tid] = 0;
@@ -90,47 +90,6 @@ __global__ void process_v(T *g_idata, T *g_odata, unsigned int n) {
 
     // write result for this block to global mem
     if (tid == 0) g_odata[blockIdx.x] = idata[0];
-}
-
-template <typename T>
-__global__ void process_v_bitmap(T *value, T *parent_data_d, unsigned long *words_d, int partitions, int vertices, T zero) {
-	int partition_id = blockIdx.x;
-	if (partition_id >= partitions) return;
-	__shared__ T local_value;
-	local_value = zero;
-	int begin_vid, end_vid;
-	// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-	const int split_partition = vertices % partitions;
-    const int partition_size = vertices / partitions + 1;
-    if (partition_id < split_partition) {
-        begin_vid = partition_id * partition_size;
-        end_vid = (partition_id + 1) * partition_size;
-    }
-    const int split_point = split_partition * partition_size;
-    begin_vid = split_point + (partition_id - split_partition) * (partition_size - 1);
-    end_vid = split_point + (partition_id - split_partition + 1) * (partition_size - 1);
-	//
-    int i = threadIdx.x + begin_vid;
-	if (i >= end_vid) return;
-	unsigned long word = words_d[i >> 6];
-	if (word == 0) return;
-	size_t j = i & 0x3f;
-	word = word >> j;
-	if(word != 0 && word & 1) local_value += (parent_data_d[i] != -1);
-	while (word!=0) {
-		if (word & 1) {
-			local_value += (parent_data_d[i] != -1);
-		}
-		i++;
-		j++;
-		word = word >> 1;
-		if (i==end_vid) break;
-	}
-	__syncthreads();
-	if (i == 0) {
-		T old = atomicAdd(value, local_value);
-	}
-    return;
 }
 
 class Graph {
@@ -283,22 +242,6 @@ public:
 					cudaDeviceSynchronize();
 					for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
 				}
-            } else {
-				// T *value_d;
-				// cudaMalloc((void**)&value_d, sizeof(T));
-				// cudaMemcpy(value_d, value, sizeof(T), cudaMemcpyHostToDevice);
-				// T *parent_data_d;
-				// T *parent_data = (T*)malloc(sizeof(T)*parent.length);
-				// parent_data = parent.data;
-				// cudaMalloc((void**)&parent_data_d, sizeof(T)*parent.length);
-				// cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent.length, cudaMemcpyHostToDevice);
-				// unsigned long *words_d;
-				// unsigned long *words = (unsigned long*)malloc(sizeof(unsigned long)*bitmap->size);
-				// words = bitmap->data;
-				// cudaMalloc((void**)&words_d, sizeof(unsigned long)*bitmap->size);
-				// cudaMemcpy(words_d, words, sizeof(unsigned long)*bitmap->size, cudaMemcpyHostToDevice);
-				// process_v_bitmap<T><<<(N+BS-1)/BS, BS>>>(value_d, parent_data_d, words_d, partitions, vertices, zero);
-				// cudaMemcpy(value, value_d, sizeof(T), cudaMemcpyDeviceToHost);
             }
 		}
 		return value;

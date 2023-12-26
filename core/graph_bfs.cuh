@@ -203,43 +203,44 @@ public:
 					end_vid = get_partition_range(vertices, partitions, cur_partition+partition_batch).first;
 				}
 				pre(std::make_pair(begin_vid, end_vid));
-				for (int partition_id=cur_partition;partition_id<cur_partition+partition_batch;partition_id++) {
-					if (partition_id < partitions) {
-						VertexId begin_vid, end_vid;
-						std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-						T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
-						T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
-						h_idata = parent.data + begin_vid;
-						T *d_idata = NULL;
-						T *d_odata = NULL;
-						cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
-						cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
-						cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
-                		process_v<T><<<((N+BS-1)/BS), BS>>>(d_idata, d_odata, end_vid - begin_vid);
-						cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
-						for (int i = 0; i < ((N+BS-1)/BS); i++)  value += h_odata[i];
-					}
-				}
+				// for (int partition_id=cur_partition;partition_id<cur_partition+partition_batch;partition_id++) {
+				// 	if (partition_id < partitions) {
+				// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
+				T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
+				T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
+				h_idata = parent.data + begin_vid;
+				T *d_idata = NULL;
+				T *d_odata = NULL;
+				cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
+				cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
+				cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+                process_v<T><<<((N+BS-1)/BS), BS>>>(d_idata, d_odata, end_vid - begin_vid);
+				cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+				for (int i = 0; i < ((N+BS-1)/BS); i++)  value += h_odata[i];
+				// 	}
+				// }
 				cudaDeviceSynchronize();
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
             if (bitmap==nullptr) {
-				for (int partition_id=0;partition_id<partitions;partition_id++) {
-					VertexId begin_vid, end_vid;
-					std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-					T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
-					T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
-					h_idata = parent.data + begin_vid;
-					T *d_idata = NULL;
-					T *d_odata = NULL;
-					cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
-					cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
-					cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
-                	process_v<<<(N+BS-1)/BS, BS>>>(d_idata, d_odata, end_vid - begin_vid);
-					cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
-					for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
-				}
+				// for (int partition_id=0;partition_id<partitions;partition_id++) {
+				VertexId begin_vid, end_vid;
+				// std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
+				begin_vid = 0;
+				end_vid = vertices;
+				T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
+				T *h_odata = (T *)malloc(sizeof(T)*((N+BS-1)/BS));
+				h_idata = parent.data + begin_vid;
+				T *d_idata = NULL;
+				T *d_odata = NULL;
+				cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
+				cudaMalloc((void**)&d_odata, sizeof(T)*((N+BS-1)/BS));
+				cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+                process_v<<<(N+BS-1)/BS, BS>>>(d_idata, d_odata, end_vid - begin_vid);
+				cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+				for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
+				// }
 				cudaDeviceSynchronize();
             }
 		}

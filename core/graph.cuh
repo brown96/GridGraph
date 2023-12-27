@@ -40,6 +40,10 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include "bigvector.hpp"
 #include "time.hpp"
 
+#include <cuda_runtime.h>
+#include <thrust/device_vector.h>
+#include <thrust/reduce.h>
+
 bool f_true(VertexId v) {
 	return true;
 }
@@ -169,9 +173,19 @@ public:
 						T local_value = zero;
 						VertexId begin_vid, end_vid;
 						std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
-						for (VertexId i=begin_vid;i<end_vid;i++) {
-							local_value += process(i);
+
+						T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
+						for (int i = 0; i < (end_vid-begin_vid); i++) {
+							h_idata[i] = process(i+begin_vid);
 						}
+
+						T *d_idata = NULL;
+						cudaMalloc((void**)&d_idata, sizeof(T)*(end_vid-begin_vid));
+						cudaMemcpy(d_idata, h_idata, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+
+						thrust::device_vector<T> d_vec(d_idata, d_idata + (begin_vid-end_vid));
+						local_value = thrust::reduce(d_vec.begin(), d_vec.end());
+
 						write_add(&value, local_value);
 					}
 				}

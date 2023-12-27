@@ -221,7 +221,6 @@ public:
 						for (int i = 0; i < ((N+BS-1)/BS); i++)  value += h_odata[i];
 					}
 				}
-				cudaDeviceSynchronize();
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
@@ -243,7 +242,6 @@ public:
 				cudaMemcpy(h_odata, d_odata, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 				for (int i = 0; i < (N+BS-1)/BS; i++) value += h_odata[i];
 				// }
-				cudaDeviceSynchronize();
             }
 		}
 		return value;

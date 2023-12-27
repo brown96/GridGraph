@@ -40,10 +40,6 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include "bigvector.hpp"
 #include "time.hpp"
 
-#include <cuda_runtime.h>
-#include <thrust/device_vector.h>
-#include <thrust/reduce.h>
-
 bool f_true(VertexId v) {
 	return true;
 }

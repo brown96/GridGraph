@@ -18,6 +18,8 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
+#define GPU_SIZE 1024l*1024l*3072
+
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -193,14 +195,35 @@ public:
 				post(std::make_pair(begin_vid, end_vid));
 			}
 		} else {
+			int q = (sizeof(T)*(((vertices+partitions-1)/partitions))+0.8*GPU_SIZE-1)/(0.8*GPU_SIZE);
+			cudaStream_t *streams = (cudaStream_t *)malloc(partitions * q * sizeof(cudaStream_t));
 			#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
 			for (int partition_id=0;partition_id<partitions;partition_id++) {
 				T local_value = zero;
 				VertexId begin_vid, end_vid;
 				std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 				if (bitmap==nullptr) {
-					for (VertexId i=begin_vid;i<end_vid;i++) {
-						local_value += process(i);
+					int stride = ((end_vid-begin_vid)+q-1)/q;
+					VertexId cur_begin_vid = begin_vid;
+					VertexId cur_end_vid;
+					for (int i = 0; i < q; i++) {
+						cudaStreamCreate(&streams[partition_id * q + i]);
+						if (cur_begin_vid + stride >= end_vid) cur_end_vid = end_vid;
+						else cur_end_vid = cur_begin_vid + stride;
+						T *h_idata = (T *)malloc(sizeof(T)*(cur_end_vid-cur_begin_vid));
+
+						for (int i = 0; i < (cur_end_vid-cur_begin_vid); i++) {
+							h_idata[i] = process(i+cur_begin_vid);
+						}
+
+						T *d_idata = NULL;
+						cudaMalloc((void**)&d_idata, sizeof(T)*(stride));
+						cudaMemcpyAsync(d_idata, h_idata, sizeof(T)*(stride), cudaMemcpyHostToDevice, streams[partition_id * q + i]);
+						thrust::device_vector<T> d_vec(d_idata, d_idata + (cur_end_vid-cur_begin_vid));
+						local_value += thrust::reduce(thrust::device.on(streams[partition_id * q + i]), d_vec.begin(), d_vec.end());
+						cur_begin_vid = cur_end_vid;
+						cudaFree(d_idata);
+						free(h_idata);
 					}
 				} else {
 					VertexId i = begin_vid;

@@ -215,18 +215,16 @@ public:
 						else cur_end_vid = cur_begin_vid + stride;
 						T *h_idata = (T *)malloc(sizeof(T)*(cur_end_vid-cur_begin_vid));
 
-						for (int i = 0; i < (cur_end_vid-cur_begin_vid); i++) {
-							h_idata[i] = (parent[i+cur_begin_vid] != -1);
-						}
+						h_idata = parent.data + cur_begin_vid;
 
-						T *d_idata = NULL;
+						T *d_idata;
 						cudaMalloc((void**)&d_idata, sizeof(T)*(stride));
 						cudaMemcpyAsync(d_idata, h_idata, sizeof(T)*(stride), cudaMemcpyHostToDevice, streams[partition_id * q + i]);
 						thrust::device_vector<T> d_vec(d_idata, d_idata + (cur_end_vid-cur_begin_vid));
+						auto ff = [=]  __device__ (T x) {return x != -1;};
+						thrust::transform(thrust::device.on(streams[partition_id * q + i]), d_vec.begin(), d_vec.end(), d_vec.begin(), ff);
 						local_value += thrust::reduce(thrust::device.on(streams[partition_id * q + i]), d_vec.begin(), d_vec.end());
 						cur_begin_vid = cur_end_vid;
-						cudaFree(d_idata);
-						free(h_idata);
 					}
 				} else {
 					VertexId i = begin_vid;

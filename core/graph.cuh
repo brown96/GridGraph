@@ -158,7 +158,7 @@ public:
 	}
 
 	template <typename T>
-	T stream_vertices(std::function<T(VertexId)> process, Bitmap * bitmap = nullptr, T zero = 0,
+	T stream_vertices(BigVector<VertexId> parent, Bitmap * bitmap = nullptr, T zero = 0,
 		std::function<void(std::pair<VertexId,VertexId>)> pre = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId>)> post = f_none_1) {
 		T value = zero;
@@ -181,7 +181,7 @@ public:
 
 						T *h_idata = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
 						for (int i = 0; i < (end_vid-begin_vid); i++) {
-							h_idata[i] = process(i+begin_vid);
+							h_idata[i] = (parent[i+begin_vid] != -1);
 						}
 
 						T *d_idata = NULL;
@@ -216,7 +216,7 @@ public:
 						T *h_idata = (T *)malloc(sizeof(T)*(cur_end_vid-cur_begin_vid));
 
 						for (int i = 0; i < (cur_end_vid-cur_begin_vid); i++) {
-							h_idata[i] = process(i+cur_begin_vid);
+							h_idata[i] = (parent[i+cur_begin_vid] != -1);
 						}
 
 						T *d_idata = NULL;
@@ -240,7 +240,7 @@ public:
 						word = word >> j;
 						while (word!=0) {
 							if (word & 1) {
-								local_value += process(i);
+								local_value += (parent[i] != -1);
 							}
 							i++;
 							j++;

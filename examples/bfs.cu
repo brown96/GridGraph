@@ -58,9 +58,7 @@ int main(int argc, char ** argv) {
 	}
 	double end_time = get_time();
 
-	int discovered_vertices = graph.stream_vertices<VertexId>([&](VertexId i){
-		return parent[i]!=-1;
-	});
+	int discovered_vertices = graph.stream_vertices<VertexId>(parent);
 	printf("discovered %d vertices from %d in %.2f seconds.\n", discovered_vertices, start_vid, end_time - start_time);
 	return 0;
 }

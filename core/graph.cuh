@@ -43,6 +43,9 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include "time.hpp"
 
 #include <cuda_runtime.h>
+#include <thrust/transform.h>
+#include <thrust/functional.h>
+#include <thrust/host_vector.h>
 #include <thrust/device_vector.h>
 #include <thrust/reduce.h>
 

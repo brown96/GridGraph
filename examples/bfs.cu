@@ -46,19 +46,14 @@ int main(int argc, char ** argv) {
 		std::swap(active_in, active_out);
 		active_out->clear();
 		graph.hint(parent);
-		active_vertices = graph.stream_edges<VertexId>([&](Edge & e){
-			if (parent[e.target]==-1) {
-				if (cas(&parent[e.target], -1, e.source)) {
-					active_out->set_bit(e.target);
-					return 1;
-				}
-			}
-			return 0;
-		}, active_in);
+		active_vertices = graph.stream_edges<VertexId>(&parent, active_out, active_in);
 	}
 	double end_time = get_time();
 
-	int discovered_vertices = graph.stream_vertices<VertexId>(parent);
+	int discovered_vertices = graph.stream_vertices<VertexId>([&](VertexId i){
+		return parent[i]!=-1;
+	});
 	printf("discovered %d vertices from %d in %.2f seconds.\n", discovered_vertices, start_vid, end_time - start_time);
+
 	return 0;
 }

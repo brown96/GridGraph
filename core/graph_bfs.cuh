@@ -56,30 +56,30 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_e(char *buffer_d, int offset, int edge_unit, int begin_vid, int end_vid, int *active_in, int *active_out, T *parent_d, int *value_h) {
-	// set thread ID
+__global__ void process_e(char *buffer_d, long offset, int edge_unit, int begin_vid, int end_vid, long *active_in, long *active_out, T *parent_d, int *value_d) {
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-	__shared__ T idata = 0;
+	__shared__ T idata[1];
+	idata[0] = 0;
 
 	int start_pos = offset % edge_unit;
 
-	int & src = *(int *)(buffer_d+start_pos+edge?unit*idx);
+	int & src = *(int *)(buffer_d+start_pos+edge_unit*idx);
 	int & dst = *(int *)(buffer_d+start_pos+edge_unit*idx+sizeof(int));
 	
 	if (src >= begin_vid && src <= end_vid) {
 		if (active_in==nullptr || (active_in[src>>6] & 1ul<<(src&0x3f))) {
-			if (*parent_d[dst]==-1) {
-				atomicCAS(parent[dst], -1, src);
-				atomicOr(active_out+(dst>>6), 1ul<<(dst&0x3f));
-				idata += 1;
+			if (parent_d[dst]==-1) {
+				atomicCAS(parent_d+dst, -1, src);
+				atomicOr((int*)active_out+(dst>>6), 1ul<<(dst&0x3f));
+				idata[0] += 1;
 			}
 			__syncthreads();
 		}
 	}
 
-	if (tid == 0) value_d[blockIdx.x] = idata;
+	if (tid == 0) value_d[blockIdx.x] = idata[0];
 	return;
 }
 
@@ -330,63 +330,70 @@ public:
 		long offset = 0;
 		switch(update_mode) {
 		case 0: // source oriented update
-			threads.clear();
-			for (int ti=0;ti<parallelism;ti++) {
-				threads.emplace_back([&](int thread_id){
-					T local_value = zero;
-					long local_read_bytes = 0;
-					while (true) {
-						int fin;
-						long offset, length;
-						std::tie(fin, offset, length) = tasks.pop();
-						if (fin==-1) break;
-						char * buffer = buffer_pool[thread_id];
-						long bytes = pread(fin, buffer, length, offset);
-						assert(bytes>0);
-						local_read_bytes += bytes;
-						// CHECK: start position should be offset % edge_unit
-						for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
-							Edge & e = *(Edge*)(buffer+pos);
-							if (bitmap==nullptr || bitmap->get_bit(e.source)) {
-								local_value += process(e);
-							}
-						}
-					}
-					write_add(&value, local_value);
-					write_add(&read_bytes, local_read_bytes);
-				}, ti);
-			}
-			fin = open((path+"/row").c_str(), read_mode);
-			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
-			for (int i=0;i<partitions;i++) {
-				if (!should_access_shard[i]) continue;
-				for (int j=0;j<partitions;j++) {
-					long begin_offset = row_offset[i*partitions+j];
-					if (begin_offset - offset >= PAGESIZE) {
-						offset = begin_offset / PAGESIZE * PAGESIZE;
-					}
-					long end_offset = row_offset[i*partitions+j+1];
-					if (end_offset <= offset) continue;
-					while (end_offset - offset >= IOSIZE) {
-						tasks.push(std::make_tuple(fin, offset, IOSIZE));
-						offset += IOSIZE;
-					}
-					if (end_offset > offset) {
-						tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
-						offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
-					}
-				}
-			}
-			for (int i=0;i<parallelism;i++) {
-				tasks.push(std::make_tuple(-1, 0, 0));
-			}
-			for (int i=0;i<parallelism;i++) {
-				threads[i].join();
-			}
-			break;
+			// threads.clear();
+			// for (int ti=0;ti<parallelism;ti++) {
+			// 	threads.emplace_back([&](int thread_id){
+			// 		T local_value = zero;
+			// 		long local_read_bytes = 0;
+			// 		while (true) {
+			// 			int fin;
+			// 			long offset, length;
+			// 			std::tie(fin, offset, length) = tasks.pop();
+			// 			if (fin==-1) break;
+			// 			char * buffer = buffer_pool[thread_id];
+			// 			long bytes = pread(fin, buffer, length, offset);
+			// 			assert(bytes>0);
+			// 			local_read_bytes += bytes;
+			// 			// CHECK: start position should be offset % edge_unit
+			// 			for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
+			// 				Edge & e = *(Edge*)(buffer+pos);
+			// 				if (bitmap==nullptr || bitmap->get_bit(e.source)) {
+			// 					local_value += process(e);
+			// 				}
+			// 			}
+			// 		}
+			// 		write_add(&value, local_value);
+			// 		write_add(&read_bytes, local_read_bytes);
+			// 	}, ti);
+			// }
+			// fin = open((path+"/row").c_str(), read_mode);
+			// //posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
+			// for (int i=0;i<partitions;i++) {
+			// 	if (!should_access_shard[i]) continue;
+			// 	for (int j=0;j<partitions;j++) {
+			// 		long begin_offset = row_offset[i*partitions+j];
+			// 		if (begin_offset - offset >= PAGESIZE) {
+			// 			offset = begin_offset / PAGESIZE * PAGESIZE;
+			// 		}
+			// 		long end_offset = row_offset[i*partitions+j+1];
+			// 		if (end_offset <= offset) continue;
+			// 		while (end_offset - offset >= IOSIZE) {
+			// 			tasks.push(std::make_tuple(fin, offset, IOSIZE));
+			// 			offset += IOSIZE;
+			// 		}
+			// 		if (end_offset > offset) {
+			// 			tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
+			// 			offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
+			// 		}
+			// 	}
+			// }
+			// for (int i=0;i<parallelism;i++) {
+			// 	tasks.push(std::make_tuple(-1, 0, 0));
+			// }
+			// for (int i=0;i<parallelism;i++) {
+			// 	threads[i].join();
+			// }
+			// break;
 		case 1: // target oriented update
 			fin = open((path+"/column").c_str(), read_mode);
 			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
+			long *active_in_d;
+			cudaMalloc((void**)&active_in_d, sizeof(long)*bitmap->size);
+			cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*bitmap->size, cudaMemcpyHostToDevice);
+
+			long *active_out_d;
+			cudaMalloc((void**)&active_out_d, sizeof(long)*active_out->size);
+			cudaMemcpy(active_out_d, active_out->data, sizeof(long)*active_out->size, cudaMemcpyHostToDevice);
 
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
 				VertexId begin_vid, end_vid;
@@ -407,24 +414,28 @@ public:
 					if (fin==-1) break;
 
 					char *buffer_h = (char *)malloc(sizeof(char)*IOSIZE);
-					long bytes = pread(fin, buffer, length, offset);
+					long bytes = pread(fin, buffer_h, length, offset);
 					assert(bytes>0);
 					local_read_bytes += bytes;
 
 					char *buffer_d;
 					cudaMalloc((void**)&buffer_d, sizeof(char)*IOSIZE);
 					cudaMemcpy(buffer_d, buffer_h, sizeof(char)*IOSIZE, cudaMemcpyHostToDevice);
+					
+					T *parent_h = (T *)malloc(sizeof(T)*(end_vid-begin_vid));
+					parent_h = parent->data + begin_vid;
+					T *parent_d;
+					cudaMalloc((void**)&parent_d, sizeof(T)*(end_vid-begin_vid));
+					cudaMemcpy(parent_d, parent_h, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+					
+					int *value_h = (int *)malloc(sizeof(int)*((N+BS-1)/BS));
+					int *value_d;
+					cudaMalloc((void**)&value_d, sizeof(int)*((N+BS-1)/BS));
 
-					// CHECK: start position should be offset % edge_unit
-					for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
-						Edge & e = *(Edge*)(buffer+pos);
-						if (e.source < begin_vid || e.source >= end_vid) {
-							continue;
-						}
-						if (bitmap==nullptr || bitmap->get_bit(e.source)) {
-							local_value += process(e);
-						}
-					}
+					process_e<<<(N+BS-1)/BS, BS>>>(buffer_d, offset, edge_unit, begin_vid, end_vid, active_in_d, active_out_d, parent_d, value_d);
+
+					cudaMemcpy(value_h, value_d, sizeof(int)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+					for (int i=0; i < (N+BS-1)/BS; i++) local_value += value_h[i];
 				}
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);

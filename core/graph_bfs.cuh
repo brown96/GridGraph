@@ -56,14 +56,16 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_e(char *buffer_d, long offset, int edge_unit, int begin_vid, int end_vid, long *active_in, long *active_out, T *parent_d, int *value_d) {
+__global__ void process_e(char *buffer_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid, long *active_in, long *active_out, T *parent_d, int *value_d) {
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
+	int start_pos = offset % edge_unit;
+
+	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
+
 	__shared__ T idata[1];
 	idata[0] = 0;
-
-	int start_pos = offset % edge_unit;
 
 	int & src = *(int *)(buffer_d+start_pos+edge_unit*idx);
 	int & dst = *(int *)(buffer_d+start_pos+edge_unit*idx+sizeof(int));
@@ -432,7 +434,7 @@ public:
 					int *value_d;
 					cudaMalloc((void**)&value_d, sizeof(int)*((N+BS-1)/BS));
 
-					process_e<<<(N+BS-1)/BS, BS>>>(buffer_d, offset, edge_unit, begin_vid, end_vid, active_in_d, active_out_d, parent_d, value_d);
+					process_e<<<(N+BS-1)/BS, BS>>>(buffer_d, offset, bytes, edge_unit, begin_vid, end_vid, active_in_d, active_out_d, parent_d, value_d);
 
 					cudaMemcpy(value_h, value_d, sizeof(int)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 					cudaMemcpy(parent_h, parent_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);

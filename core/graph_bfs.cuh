@@ -56,18 +56,31 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-__global__ void process_e(char *buffer_d, int offset, int edge_unit, int begin_vid, int end_vid, int *active_in, int *active_out, T *parent_d) {
+__global__ void process_e(char *buffer_d, int offset, int edge_unit, int begin_vid, int end_vid, int *active_in, int *active_out, T *parent_d, int *value_h) {
 	// set thread ID
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	__shared__ T idata = 0;
 
 	int start_pos = offset % edge_unit;
 
 	int & src = *(int *)(buffer_d+start_pos+edge?unit*idx);
 	int & dst = *(int *)(buffer_d+start_pos+edge_unit*idx+sizeof(int));
 	
+	if (src >= begin_vid && src <= end_vid) {
+		if (active_in==nullptr || (active_in[src>>6] & 1ul<<(src&0x3f))) {
+			if (*parent_d[dst]==-1) {
+				atomicCAS(parent[dst], -1, src);
+				atomicOr(active_out+(dst>>6), 1ul<<(dst&0x3f));
+				idata += 1;
+			}
+			__syncthreads();
+		}
+	}
 
-
+	if (tid == 0) value_d[blockIdx.x] = idata;
+	return;
 }
 
 class Graph {

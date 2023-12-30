@@ -435,6 +435,8 @@ public:
 					process_e<<<(N+BS-1)/BS, BS>>>(buffer_d, offset, edge_unit, begin_vid, end_vid, active_in_d, active_out_d, parent_d, value_d);
 
 					cudaMemcpy(value_h, value_d, sizeof(int)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+					cudaMemcpy(parent_h, parent_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
+					cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
 					for (int i=0; i < (N+BS-1)/BS; i++) local_value += value_h[i];
 				}
 				write_add(&value, local_value);

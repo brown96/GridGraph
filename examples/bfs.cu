@@ -14,7 +14,7 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
    limitations under the License.
 */
 
-#include "../core/graph_bfs.cuh"
+#include "../core/graph1.cuh"
 
 int main(int argc, char ** argv) {
 	if (argc<3) {
@@ -46,7 +46,7 @@ int main(int argc, char ** argv) {
 		std::swap(active_in, active_out);
 		active_out->clear();
 		graph.hint(parent);
-		active_vertices = graph.stream_edges<VertexId>(&parent, active_out, active_in);
+		active_vertices = graph.stream_edges<VertexId>(parent.data, active_out, active_in);
 	}
 	double end_time = get_time();
 

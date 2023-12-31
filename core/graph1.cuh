@@ -18,6 +18,9 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
+#define WORD_OFFSET(i) (i >> 6)
+#define BIT_OFFSET(i) (i & 0x3f)
+
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -53,10 +56,10 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(VertexId src, VertexId dst, T *parent, Bitmap * active_out) {
+int process(VertexId src, VertexId dst, T *parent, unsigned long * active_out_data) {
 	if (parent[dst]==-1) {
 		if (cas(&parent[dst], -1, src)) {
-			active_out->set_bit(dst);
+			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
 			return 1;
 		}
 	}
@@ -255,7 +258,7 @@ public:
 	}
 
 	template <typename T>
-	T stream_edges(T * parent_data, Bitmap * active_out, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
+	T stream_edges(T * parent_data, unsigned long * active_out_data, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_target_window = f_none_1,
@@ -328,8 +331,8 @@ public:
 						for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 							VertexId & src = *(VertexId*)(buffer+pos);
 							VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-							if (bitmap==nullptr || bitmap->get_bit(src)) {
-								local_value += process(src, dst, parent_data, active_out);
+							if (bitmap==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+								local_value += process(src, dst, parent_data, active_out_data);
 							}
 						}
 					}
@@ -400,8 +403,8 @@ public:
 								if (src < begin_vid || src >= end_vid) {
 									continue;
 								}
-								if (bitmap==nullptr || bitmap->get_bit(src)) {
-									local_value += process(src, dst, parent_data, active_out);
+								if (bitmap==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+									local_value += process(src, dst, parent_data, active_out_data);
 								}
 							}
 						}

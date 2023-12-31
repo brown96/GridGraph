@@ -53,10 +53,10 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(Edge e, T *parent, Bitmap * active_out) {
-	if (parent[e.target]==-1) {
-		if (cas(&parent[e.target], -1, e.source)) {
-			active_out->set_bit(e.target);
+int process(VertexId src, VertexId dst, T *parent, Bitmap * active_out) {
+	if (parent[dst]==-1) {
+		if (cas(&parent[dst], -1, src)) {
+			active_out->set_bit(dst);
 			return 1;
 		}
 	}
@@ -326,9 +326,10 @@ public:
 						local_read_bytes += bytes;
 						// CHECK: start position should be offset % edge_unit
 						for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
-							Edge & e = *(Edge*)(buffer+pos);
-							if (bitmap==nullptr || bitmap->get_bit(e.source)) {
-								local_value += process(e, parent_data, active_out);
+							VertexId & src = *(VertexId*)(buffer+pos);
+							VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+							if (bitmap==nullptr || bitmap->get_bit(src)) {
+								local_value += process(src, dst, parent_data, active_out);
 							}
 						}
 					}
@@ -394,12 +395,13 @@ public:
 							local_read_bytes += bytes;
 							// CHECK: start position should be offset % edge_unit
 							for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
-								Edge & e = *(Edge*)(buffer+pos);
-								if (e.source < begin_vid || e.source >= end_vid) {
+								VertexId & src = *(VertexId*)(buffer+pos);
+								VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+								if (src < begin_vid || src >= end_vid) {
 									continue;
 								}
-								if (bitmap==nullptr || bitmap->get_bit(e.source)) {
-									local_value += process(e, parent_data, active_out);
+								if (bitmap==nullptr || bitmap->get_bit(src)) {
+									local_value += process(src, dst, parent_data, active_out);
 								}
 							}
 						}

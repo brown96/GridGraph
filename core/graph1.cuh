@@ -69,8 +69,38 @@ int process(VertexId src, VertexId dst, T *parent_data, unsigned long * active_o
 	return 0;
 }
 
-// template <typename T>
-// __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d, T *parent_data_d)
+template <typename T>
+__global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
+	unsigned int tid = threadIdx.x;
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	int start_pos = offset % edge_unit;
+
+	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
+
+	__shared__ T idata[1];
+	idata[0] = 0;
+
+	int pos = start_pos + edge_unit*idx;
+
+	int & src = *(int*)(buffer_d+pos);
+	int & dst = *(int*)(buffer_d+pos+sizeof(int));
+
+	if (src < begin_vid || src >= end_vid) {
+		return;
+	}
+	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+		if (parent_data_d[dst]==-1) {
+			atomicCAS(parent_data_d+dst, -1, src);
+			atomicOr((int*)(active_out_d+WORD_OFFSET(dst)), 1ul<<BIT_OFFSET(dst));
+			idata[0] += 1;
+		}
+	}
+	__syncthreads();
+
+	if (tid == 0) local_value_d[blockIdx.x] += idata[0];
+	return;
+} 
 
 class Graph {
 	int parallelism;

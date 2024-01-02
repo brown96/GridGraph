@@ -258,7 +258,7 @@ public:
 	}
 
 	template <typename T>
-	T stream_edges(T * parent_data, unsigned long * active_out_data, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
+	T stream_edges(T * parent_data, Bitmap * active_out, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_target_window = f_none_1,
@@ -331,8 +331,8 @@ public:
 						for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 							VertexId & src = *(VertexId*)(buffer+pos);
 							VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-							if (bitmap==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-								local_value += process(src, dst, parent_data, active_out_data);
+							if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+								local_value += process(src, dst, parent_data, active_out->data);
 							}
 						}
 					}
@@ -372,6 +372,14 @@ public:
 			fin = open((path+"/column").c_str(), read_mode);
 			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
 
+			long *active_in_d;
+			cudaMalloc((void**)&active_in_d, sizeof(long)*bitmap->size);
+			cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*bitmap->size, cudaMemcpyHostToDevice);
+
+			long *active_out_d;
+			cudaMalloc((void**)&active_out_d, sizeof(long)*active_out->size);
+			cudaMemcpy(active_out_d, active_out->data, sizeof(long)*active_out->size, cudaMemcpyHostToDevice);
+
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
 				VertexId begin_vid, end_vid;
 				begin_vid = get_partition_range(vertices, partitions, cur_partition).first;
@@ -396,6 +404,11 @@ public:
 							long bytes = pread(fin, buffer, length, offset);
 							assert(bytes>0);
 							local_read_bytes += bytes;
+
+							char *buffer_d;
+							cudaMalloc((void**)&buffer_d, sizeof(char)*IOSIZE);
+							cudaMemcpy(buffer_d, buffer, sizeof(char)*IOSIZE, cudaMemcpyHostToDevice);
+
 							// CHECK: start position should be offset % edge_unit
 							for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 								VertexId & src = *(VertexId*)(buffer+pos);
@@ -403,8 +416,8 @@ public:
 								if (src < begin_vid || src >= end_vid) {
 									continue;
 								}
-								if (bitmap==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-									local_value += process(src, dst, parent_data, active_out_data);
+								if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+									local_value += process(src, dst, parent_data, active_out->data);
 								}
 							}
 						}

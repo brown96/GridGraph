@@ -18,6 +18,9 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
+#define N ((long)1024*1024*1024)
+#define BS 1024
+
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
 
@@ -56,15 +59,18 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(VertexId src, VertexId dst, T *parent, unsigned long * active_out_data) {
-	if (parent[dst]==-1) {
-		if (cas(&parent[dst], -1, src)) {
+int process(VertexId src, VertexId dst, T *parent_data, unsigned long * active_out_data) {
+	if (parent_data[dst]==-1) {
+		if (cas(&parent_data[dst], -1, src)) {
 			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
 			return 1;
 		}
 	}
 	return 0;
 }
+
+// template <typename T>
+// __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d, T *parent_data_d)
 
 class Graph {
 	int parallelism;
@@ -390,11 +396,22 @@ public:
 				}
 				pre_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("pre %d %d\n", begin_vid, end_vid);
+
+				T * parent_data_d;
+				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
+				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+
 				threads.clear();
 				for (int ti=0;ti<parallelism;ti++) {
 					threads.emplace_back([&](int thread_id){
 						T local_value = zero;
 						long local_read_bytes = 0;
+
+						T *local_value_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
+						T *local_value_d;
+						cudaMalloc((void**)&local_value_d, sizeof(T)*((N+BS-1)/BS));
+						cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
+
 						while (true) {
 							int fin;
 							long offset, length;
@@ -420,7 +437,10 @@ public:
 									local_value += process(src, dst, parent_data, active_out->data);
 								}
 							}
+							cudaMemcpy(parent_data, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
 						}
+						cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+						for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
 						write_add(&value, local_value);
 						write_add(&read_bytes, local_read_bytes);
 					}, ti);
@@ -455,6 +475,9 @@ public:
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);
 			}
+			
+			// 以下の処理はカーネル関数実装前ではactive_outのデータ更新ができないためコメントアウト
+			// cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
 
 			break;
 		default:

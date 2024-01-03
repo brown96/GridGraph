@@ -389,39 +389,7 @@ public:
 				pre_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("pre %d %d\n", begin_vid, end_vid);
 
-				threads.clear();
-				for (int ti=0;ti<parallelism;ti++) {
-					threads.emplace_back([&](int thread_id){
-						T local_value = zero;
-						long local_read_bytes = 0;
-
-						while (true) {
-							int fin;
-							long offset, length;
-							std::tie(fin, offset, length) = tasks.pop();
-							if (fin==-1) break;
-							char * buffer = buffer_pool[thread_id];
-							long bytes = pread(fin, buffer, length, offset);
-							assert(bytes>0);
-							local_read_bytes += bytes;
-
-							// CHECK: start position should be offset % edge_unit
-							for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
-								VertexId & src = *(VertexId*)(buffer+pos);
-								VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-								if (src < begin_vid || src >= end_vid) {
-									continue;
-								}
-								if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-									local_value += process(src, dst, parent_data, active_out->data);
-								}
-							}
-						}
-						write_add(&value, local_value);
-						write_add(&read_bytes, local_read_bytes);
-					}, ti);
-				}
-				offset = 0;
+                offset = 0;
 				for (int j=0;j<partitions;j++) {
 					for (int i=cur_partition;i<cur_partition+partition_batch;i++) {
 						if (i>=partitions) break;
@@ -442,12 +410,49 @@ public:
 						}
 					}
 				}
-				for (int i=0;i<parallelism;i++) {
-					tasks.push(std::make_tuple(-1, 0, 0));
-				}
-				for (int i=0;i<parallelism;i++) {
-					threads[i].join();
-				}
+
+                tasks.push(std::make_tuple(-1, 0, 0));
+                
+				// threads.clear();
+				// for (int ti=0;ti<1;ti++) {
+				// 	threads.emplace_back([&](int thread_id){
+						T local_value = zero;
+						long local_read_bytes = 0;
+
+						while (true) {
+							int fin = -1;
+							long offset, length;
+							std::tie(fin, offset, length) = tasks.pop();
+                            printf("fin=%d\n", fin);
+							if (fin==-1) break;
+							char * buffer = buffer_pool[0];
+							long bytes = pread(fin, buffer, length, offset);
+							assert(bytes>0);
+							local_read_bytes += bytes;
+
+							// CHECK: start position should be offset % edge_unit
+							for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
+								VertexId & src = *(VertexId*)(buffer+pos);
+								VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+								if (src < begin_vid || src >= end_vid) {
+									continue;
+								}
+								if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+									local_value += process(src, dst, parent_data, active_out->data);
+								}
+							}
+						}
+						write_add(&value, local_value);
+						write_add(&read_bytes, local_read_bytes);
+				// 	}, ti);
+				// }
+				
+				// for (int i=0;i<1;i++) {
+					// tasks.push(std::make_tuple(-1, 0, 0));
+				// }
+				// for (int i=0;i<1;i++) {
+				// 	threads[i].join();
+				// }
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);
 			}

@@ -70,6 +70,13 @@ int process(VertexId src, VertexId dst, T *parent_data, unsigned long * active_o
 }
 
 template <typename T>
+__global__ void process_test(T *parent_data_d, int n) {
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= n) return;
+	atomicCAS(parent_data_d+idx, -1, 1);
+}
+
+template <typename T>
 __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
 	unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -443,45 +450,6 @@ public:
 				pre_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("pre %d %d\n", begin_vid, end_vid);
 				
-				T * parent_data_d;
-				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
-				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
-
-				threads.clear();
-				for (int ti=0;ti<parallelism;ti++) {
-					threads.emplace_back([&](int thread_id){
-						T local_value = zero;
-						long local_read_bytes = 0;
-
-						while (true) {
-							int fin;
-							long offset, length;
-							std::tie(fin, offset, length) = tasks.pop();
-							if (fin==-1) break;
-							char * buffer = buffer_pool[thread_id];
-							long bytes = pread(fin, buffer, length, offset);
-							assert(bytes>0);
-							local_read_bytes += bytes;
-
-							char *buffer_d;
-							cudaMalloc((void**)&buffer_d, sizeof(char)*IOSIZE);
-							cudaMemcpy(buffer_d, buffer, sizeof(char)*IOSIZE, cudaMemcpyHostToDevice);
-
-							T *local_value_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
-							T *local_value_d;
-							cudaMalloc((void**)&local_value_d, sizeof(T)*((N+BS-1)/BS));
-							cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
-
-							process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
-							cudaDeviceSynchronize();
-							cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
-							for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
-						}
-						write_add(&value, local_value);
-						write_add(&read_bytes, local_read_bytes);
-					}, ti);
-				}
-				cudaMemcpy(parent_data, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
 				offset = 0;
 				for (int j=0;j<partitions;j++) {
 					for (int i=cur_partition;i<cur_partition+partition_batch;i++) {
@@ -503,20 +471,49 @@ public:
 						}
 					}
 				}
-				for (int i=0;i<parallelism;i++) {
-					tasks.push(std::make_tuple(-1, 0, 0));
+
+                tasks.push(std::make_tuple(-1, 0, 0));
+
+				T * parent_data_d;
+				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
+				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+				process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
+
+				T local_value = zero;
+				long local_read_bytes = 0;
+				while (true) {
+					int fin;
+					long offset, length;
+					std::tie(fin, offset, length) = tasks.pop();
+					if (fin==-1) break;
+					char * buffer = buffer_pool[0];
+					long bytes = pread(fin, buffer, length, offset);
+					assert(bytes>0);
+					local_read_bytes += bytes;
+
+					char *buffer_d;
+					cudaMalloc((void**)&buffer_d, sizeof(char)*IOSIZE);
+					cudaMemcpy(buffer_d, buffer, sizeof(char)*IOSIZE, cudaMemcpyHostToDevice);
+
+					T *local_value_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
+					T *local_value_d;
+					cudaMalloc((void**)&local_value_d, sizeof(T)*((N+BS-1)/BS));
+					cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
+
+					// process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+					cudaDeviceSynchronize();
+					cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+					for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
 				}
-				for (int i=0;i<parallelism;i++) {
-					threads[i].join();
-				}
+				write_add(&value, local_value);
+				write_add(&read_bytes, local_read_bytes);
+				cudaMemcpy(parent_data, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
+
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);
 			}
 
 			cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
-			
-			// 以下の処理はカーネル関数実装前ではactive_outのデータ更新ができないためコメントアウト
-			// cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
 
 			break;
 		default:

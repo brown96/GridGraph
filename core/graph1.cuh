@@ -83,8 +83,6 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 	unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
-	printf("カーネルが実行されました\n");
-
 	int start_pos = offset % edge_unit;
 
 	if (start_pos + edge_unit*idx + edge_unit > bytes) return;

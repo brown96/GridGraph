@@ -477,7 +477,6 @@ public:
 				T * parent_data_d;
 				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
 				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
-				process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
 
 				T local_value = zero;
 				long local_read_bytes = 0;
@@ -501,6 +500,7 @@ public:
 					cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
 
 					// process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+					process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
 					cudaDeviceSynchronize();
 					cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 					for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];

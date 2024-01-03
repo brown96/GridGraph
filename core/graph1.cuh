@@ -83,6 +83,8 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 	unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
+	printf("カーネルが実行されました\n");
+
 	int start_pos = offset % edge_unit;
 
 	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
@@ -103,7 +105,7 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
 		if (parent_data_d[dst]==-1) {
 			if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
-				atomicOr(active_out_d+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
+				atomicOr((unsigned long long int*)active_out_d+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
 				idata[tid] = 1;
 				__syncthreads();
 			}

@@ -24,6 +24,8 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
 
+#define GPU_SIZE 1024l*1024l*3072
+
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
@@ -87,6 +89,9 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 
 	__shared__ T idata[BS];
 
+	idata[tid] = 0;
+	__syncthreads();
+
 	int pos = start_pos + edge_unit * idx;
 
 	int & src = *(int*)(buffer_d+pos);
@@ -97,28 +102,16 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 	}
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
 		if (parent_data_d[dst]==-1) {
-			atomicCAS(parent_data_d+dst, -1, src);
-			atomicOr((int*)(active_out_d+WORD_OFFSET(dst)), 1ul<<BIT_OFFSET(dst));
-			idata[tid] = 1;
-			__syncthreads();
-		}
-		else {
-			idata[tid] = 0;
-			__syncthreads();
+			if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
+				atomicOr(active_out_d+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
+				idata[tid] = 1;
+				__syncthreads();
+			}
 		}
 	}
-	else {
-		idata[tid] = 0;
-		__syncthreads();
-	}
 
-	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1)
-    {
-        if (tid < stride)
-        {
-			idata[tid] += idata[tid + stride];
-        }
-
+	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tid < stride) idata[tid] += idata[tid + stride];
         __syncthreads();
     }
 
@@ -435,10 +428,6 @@ public:
 			cudaMalloc((void**)&active_in_d, sizeof(long)*bitmap->size);
 			cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*bitmap->size, cudaMemcpyHostToDevice);
 
-			long *active_out_d;
-			cudaMalloc((void**)&active_out_d, sizeof(long)*active_out->size);
-			cudaMemcpy(active_out_d, active_out->data, sizeof(long)*active_out->size, cudaMemcpyHostToDevice);
-
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
 				VertexId begin_vid, end_vid;
 				begin_vid = get_partition_range(vertices, partitions, cur_partition).first;
@@ -478,6 +467,10 @@ public:
 				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
 				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
 
+				long *active_out_d;
+				cudaMalloc((void**)&active_out_d, sizeof(long)*active_out->size);
+				cudaMemcpy(active_out_d, active_out->data, sizeof(long)*active_out->size, cudaMemcpyHostToDevice);
+
 				T local_value = zero;
 				long local_read_bytes = 0;
 				while (true) {
@@ -499,8 +492,8 @@ public:
 					cudaMalloc((void**)&local_value_d, sizeof(T)*((N+BS-1)/BS));
 					cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
 
-					// process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
-					process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
+					process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+					// process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
 					cudaDeviceSynchronize();
 					cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 					for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
@@ -508,12 +501,11 @@ public:
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
 				cudaMemcpy(parent_data, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
+				cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
 
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);
 			}
-
-			cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
 
 			break;
 		default:

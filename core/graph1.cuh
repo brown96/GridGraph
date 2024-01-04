@@ -343,6 +343,11 @@ public:
 		T value = zero;
 		Queue<std::tuple<int, long, long> > tasks(65536);
 		std::vector<std::thread> threads;
+
+		char *buffer_mem_h = (char*)malloc(sizeof(char)*IOSIZE);
+		char *buffer_mem_d;
+		cudaMalloc((void**)&buffer_mem_d, sizeof(char)*PAGESIZE);
+
 		long read_bytes = 0;
 
 		long total_bytes = 0;
@@ -425,8 +430,12 @@ public:
 			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
 
 			long *active_in_d;
-			cudaMalloc((void**)&active_in_d, sizeof(long)*bitmap->size);
-			cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*bitmap->size, cudaMemcpyHostToDevice);
+			cudaMalloc((void**)&active_in_d, sizeof(long)*WORD_OFFSET(bitmap->size));
+			cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice);
+
+			long *active_out_d;
+				cudaMalloc((void**)&active_out_d, sizeof(long)*WORD_OFFSET(active_out->size));
+				cudaMemcpy(active_out_d, active_out->data, sizeof(long)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice);
 
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
 				VertexId begin_vid, end_vid;
@@ -467,10 +476,6 @@ public:
 				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
 				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
 
-				long *active_out_d;
-				cudaMalloc((void**)&active_out_d, sizeof(long)*active_out->size);
-				cudaMemcpy(active_out_d, active_out->data, sizeof(long)*active_out->size, cudaMemcpyHostToDevice);
-
 				T local_value = zero;
 				long local_read_bytes = 0;
 				while (true) {
@@ -501,11 +506,11 @@ public:
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
 				cudaMemcpy(parent_data, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
-				cudaMemcpy(active_out->data, active_out_d, sizeof(long)*active_out->size, cudaMemcpyDeviceToHost);
 
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);
 			}
+			cudaMemcpy(active_out->data, active_out_d, sizeof(long)*WORD_OFFSET(active_out->size), cudaMemcpyDeviceToHost);
 
 			break;
 		default:

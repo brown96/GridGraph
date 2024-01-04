@@ -75,6 +75,8 @@ __global__ void process_test(T *parent_data_d, int n) {
 	atomicCAS(parent_data_d+idx, -1, 1);
 }
 
+__device__ int value_d;
+
 template <typename T>
 __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
 	unsigned int tid = threadIdx.x;
@@ -84,9 +86,11 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
 
-	__shared__ T idata[BS];
+	// __shared__ T idata[BS];
 
-	idata[tid] = 0;
+	if (idx==0) value_d = 0;
+
+	// idata[tid] = 0;
 	__syncthreads();
 
 	int pos = start_pos + edge_unit * idx;
@@ -97,21 +101,23 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 	if (src < begin_vid || src >= end_vid) {
 		return;
 	}
-	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
 		T oldValue = atomicCAS(parent_data_d+dst, -1, src);
 		if (oldValue==-1) {
 			atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
-			idata[tid] = 1;
+			// idata[tid] = 1;
+			atomicAdd(&value_d, 1);
 			__syncthreads();
 		}
 	}
 
-	for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-        if (tid < stride) idata[tid] += idata[tid + stride];
-        __syncthreads();
-    }
+	// for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+    //     if (tid < stride) idata[tid] += idata[tid + stride];
+    //     __syncthreads();
+    // }
 
-	if (tid == 0) local_value_d[blockIdx.x] = idata[0];
+	if (idx == 0) local_value_d[0] = value_d;
+	// if (idx == 0) printf("value_d = %d\n", value_d);
 } 
 
 class Graph {
@@ -499,9 +505,11 @@ public:
 						T *local_value_d = local_value_mem_d;
 						cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
 						process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
-						cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
 						cudaDeviceSynchronize();
-						for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
+						cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+						// printf("local_value_h[0]=%d\n", local_value_h[0]);
+						local_value += local_value_h[0];
+						// printf("local_value=%d\n\n", local_value);
 					}
 					// process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
 				}

@@ -23,7 +23,7 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
 class Bitmap {
 public:
 	size_t size;
-	unsigned long * data;
+	unsigned long long int * data;
 	Bitmap() {
 		size = 0;
 		data = NULL;
@@ -33,7 +33,7 @@ public:
 	}
 	void init(size_t size) {
 		this->size = size;
-		data = new unsigned long [WORD_OFFSET(size)+1];
+		data = new unsigned long long int [WORD_OFFSET(size)+1];
 	}
 	void clear() {
 		size_t bm_size = WORD_OFFSET(size);
@@ -55,7 +55,7 @@ public:
 			data[bm_size] |= 1ul << BIT_OFFSET(i);
 		}
 	}
-	unsigned long get_bit(size_t i) {
+	unsigned long long int get_bit(size_t i) {
 		return data[WORD_OFFSET(i)] & (1ul<<BIT_OFFSET(i));
 	}
 	void set_bit(size_t i) {

@@ -21,9 +21,6 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*1024)
 #define BS 1024
 
-#define WORD_OFFSET(i) (i >> 6)
-#define BIT_OFFSET(i) (i & 0x3f)
-
 #define PART_SIZE 1
 
 #include <cstdio>
@@ -61,7 +58,7 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(VertexId src, VertexId dst, T *parent_data, unsigned long * active_out_data) {
+int process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data) {
 	if (parent_data[dst]==-1) {
 		if (cas(&parent_data[dst], -1, src)) {
 			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
@@ -79,7 +76,7 @@ __global__ void process_test(T *parent_data_d, int n) {
 }
 
 template <typename T>
-__global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
+__global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
 	unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -101,12 +98,11 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 		return;
 	}
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-		if (parent_data_d[dst]==-1) {
-			if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
-				atomicOr((long long int*)(active_out_d+WORD_OFFSET(dst)), 1ul<<BIT_OFFSET(dst));
-				idata[tid] = 1;
-				__syncthreads();
-			}
+		T oldValue = atomicCAS(parent_data_d+dst, -1, src);
+		if (oldValue==-1) {
+			atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
+			idata[tid] = 1;
+			__syncthreads();
 		}
 	}
 
@@ -353,13 +349,13 @@ public:
 		T *parent_data_mem_d;
 		cudaMalloc((void**)&parent_data_mem_d, sizeof(T)*parent_data_size);
 
-		long *active_in_d;
-		cudaMalloc((void**)&active_in_d, sizeof(long)*WORD_OFFSET(bitmap->size));
-		cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice);
+		unsigned long long int *active_in_d;
+		cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*WORD_OFFSET(bitmap->size));
+		cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice);
 
-		long *active_out_d;
-		cudaMalloc((void**)&active_out_d, sizeof(long)*WORD_OFFSET(active_out->size));
-		cudaMemcpy(active_out_d, active_out->data, sizeof(long)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice);
+		unsigned long long int *active_out_d;
+		cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size));
+		cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice);
 
 		T *local_value_mem_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
 		T *local_value_mem_d;
@@ -516,7 +512,7 @@ public:
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);
 			}
-			cudaMemcpy(active_out->data, active_out_d, sizeof(long)*WORD_OFFSET(active_out->size), cudaMemcpyDeviceToHost);
+			cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size), cudaMemcpyDeviceToHost);
 
 			break;
 		default:

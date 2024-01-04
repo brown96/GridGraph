@@ -24,7 +24,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
 
-#define GPU_SIZE 1024l*1024l*3072
+#define PART_SIZE 1
 
 #include <cstdio>
 #include <cstdlib>
@@ -103,7 +103,7 @@ __global__ void process_e(char *buffer_d, long *active_in_d, long *active_out_d,
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
 		if (parent_data_d[dst]==-1) {
 			if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
-				atomicOr((unsigned long long int*)active_out_d+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
+				atomicOr((long long int*)(active_out_d+WORD_OFFSET(dst)), 1ul<<BIT_OFFSET(dst));
 				idata[tid] = 1;
 				__syncthreads();
 			}
@@ -344,9 +344,26 @@ public:
 		Queue<std::tuple<int, long, long> > tasks(65536);
 		std::vector<std::thread> threads;
 
-		char *buffer_mem_h = (char*)malloc(sizeof(char)*IOSIZE);
+		// char *buffer_mem_h = (char*)malloc(sizeof(char)*IOSIZE);
 		char *buffer_mem_d;
-		cudaMalloc((void**)&buffer_mem_d, sizeof(char)*PAGESIZE);
+		cudaMalloc((void**)&buffer_mem_d, sizeof(char)*IOSIZE/PART_SIZE);
+
+		int x = partitions / partition_batch;
+		int parent_data_size = (vertices + x - 1) / x;
+		T *parent_data_mem_d;
+		cudaMalloc((void**)&parent_data_mem_d, sizeof(T)*parent_data_size);
+
+		long *active_in_d;
+		cudaMalloc((void**)&active_in_d, sizeof(long)*WORD_OFFSET(bitmap->size));
+		cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice);
+
+		long *active_out_d;
+		cudaMalloc((void**)&active_out_d, sizeof(long)*WORD_OFFSET(active_out->size));
+		cudaMemcpy(active_out_d, active_out->data, sizeof(long)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice);
+
+		T *local_value_mem_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
+		T *local_value_mem_d;
+		cudaMalloc((void**)&local_value_mem_d, sizeof(T)*((N+BS-1)/BS));
 
 		long read_bytes = 0;
 
@@ -429,14 +446,6 @@ public:
 			fin = open((path+"/column").c_str(), read_mode);
 			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
 
-			long *active_in_d;
-			cudaMalloc((void**)&active_in_d, sizeof(long)*WORD_OFFSET(bitmap->size));
-			cudaMemcpy(active_in_d, bitmap->data, sizeof(long)*WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice);
-
-			long *active_out_d;
-				cudaMalloc((void**)&active_out_d, sizeof(long)*WORD_OFFSET(active_out->size));
-				cudaMemcpy(active_out_d, active_out->data, sizeof(long)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice);
-
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
 				VertexId begin_vid, end_vid;
 				begin_vid = get_partition_range(vertices, partitions, cur_partition).first;
@@ -472,9 +481,8 @@ public:
 
                 tasks.push(std::make_tuple(-1, 0, 0));
 
-				T * parent_data_d;
-				cudaMalloc((void**)&parent_data_d, sizeof(T)*(end_vid-begin_vid));
-				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*(end_vid-begin_vid), cudaMemcpyHostToDevice);
+				T * parent_data_d = parent_data_mem_d;
+				cudaMemcpy(parent_data_d, parent_data, sizeof(T)*parent_data_size, cudaMemcpyHostToDevice);
 
 				T local_value = zero;
 				long local_read_bytes = 0;
@@ -488,24 +496,22 @@ public:
 					assert(bytes>0);
 					local_read_bytes += bytes;
 
-					char *buffer_d;
-					cudaMalloc((void**)&buffer_d, sizeof(char)*IOSIZE);
-					cudaMemcpy(buffer_d, buffer, sizeof(char)*IOSIZE, cudaMemcpyHostToDevice);
-
-					T *local_value_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
-					T *local_value_d;
-					cudaMalloc((void**)&local_value_d, sizeof(T)*((N+BS-1)/BS));
-					cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
-
-					process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+					for (int cur_buffer = 0; cur_buffer < IOSIZE; cur_buffer += IOSIZE/PART_SIZE) {
+						char *buffer_d = buffer_mem_d;
+						cudaMemcpy(buffer_d, buffer+cur_buffer, sizeof(char)*IOSIZE/PART_SIZE, cudaMemcpyHostToDevice);
+						T *local_value_h = local_value_mem_h;
+						T *local_value_d = local_value_mem_d;
+						cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice);
+						process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+						cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
+						cudaDeviceSynchronize();
+						for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
+					}
 					// process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
-					cudaDeviceSynchronize();
-					cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost);
-					for (int i = 0; i < (N+BS-1)/BS; i++) local_value += local_value_h[i];
 				}
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
-				cudaMemcpy(parent_data, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost);
+				cudaMemcpy(parent_data, parent_data_d, sizeof(T)*parent_data_size, cudaMemcpyDeviceToHost);
 
 				post_source_window(std::make_pair(begin_vid, end_vid));
 				// printf("post %d %d\n", begin_vid, end_vid);

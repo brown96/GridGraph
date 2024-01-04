@@ -59,7 +59,7 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(VertexId src, VertexId dst, T *parent_data, unsigned long * active_out_data) {
+int process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data) {
 	if (parent_data[dst]==-1) {
 		if (cas(&parent_data[dst], -1, src)) {
 			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
@@ -283,7 +283,7 @@ public:
 				std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 				VertexId i = begin_vid;
 				while (i<end_vid) {
-					unsigned long word = bitmap->data[WORD_OFFSET(i)];
+					unsigned long long int word = bitmap->data[WORD_OFFSET(i)];
 					if (word!=0) {
 						should_access_shard[partition_id] = true;
 						break;
@@ -423,7 +423,6 @@ public:
 							int fin = -1;
 							long offset, length;
 							std::tie(fin, offset, length) = tasks.pop();
-                            printf("fin=%d\n", fin);
 							if (fin==-1) break;
 							char * buffer = buffer_pool[0];
 							long bytes = pread(fin, buffer, length, offset);

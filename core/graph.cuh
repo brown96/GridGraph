@@ -18,8 +18,9 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*8)
+#define N ((long)1024*1024*2)
 #define BS 1024
+#define GS (N+BS-1)/BS
 
 #define PART_SIZE 1
 
@@ -76,18 +77,20 @@ __global__ void process_test(T *parent_data_d, int n) {
 	atomicCAS(parent_data_d+idx, -1, 1);
 }
 
-__device__ int value_d;
-
 template <typename T>
 __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
 	unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
+	__shared__ T sdata[BS];
+
+	sdata[tid] = 0;
+
+	__syncthreads();
+
 	int start_pos = offset % edge_unit;
 
 	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
-
-	if (idx==0) value_d = 0;
 
 	int pos = start_pos + edge_unit * idx;
 
@@ -100,12 +103,20 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
 		if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
 			atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
-			atomicAdd(&value_d, 1);
+			sdata[tid] = 1;
 		}
 	}
-	for (int i = 0; i < 100; i++) __syncthreads();
+	
+	__syncthreads();
 
-	if (idx == 0) local_value_d[0] = value_d;
+	for (int s = 1; s < blockDim.x; s *= 2) {
+        if (tid % (2 * s) == 0) {
+            sdata[tid] += sdata[tid + s];
+        }
+        __syncthreads();
+    }
+
+	if (tid == 0) local_value_d[blockIdx.x] = sdata[0];
 	// if (idx == 0) printf("value_d = %d\n", value_d);
 } 
 
@@ -352,9 +363,9 @@ public:
 		CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size)));
 		CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice));
 
-		T *local_value_mem_h = (T*)calloc(sizeof(T), 1);
+		T *local_value_mem_h = (T*)calloc(sizeof(T), GS);
 		T *local_value_mem_d;
-		CHECK(cudaMalloc((void**)&local_value_mem_d, sizeof(T)*1));
+		CHECK(cudaMalloc((void**)&local_value_mem_d, sizeof(T)*GS));
 
 		long read_bytes = 0;
 
@@ -492,15 +503,14 @@ public:
 						CHECK(cudaMemcpy(buffer_d, buffer+cur_buffer, sizeof(char)*IOSIZE/PART_SIZE, cudaMemcpyHostToDevice));
 						T *local_value_h = local_value_mem_h;
 						T *local_value_d = local_value_mem_d;
-						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*1, cudaMemcpyHostToDevice));
-						process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*GS, cudaMemcpyHostToDevice));
+						process_e<T><<<GS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
 						cudaDeviceSynchronize();
-						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
-						// printf("local_value_h[0]=%d\n", local_value_h[0]);
-						local_value += local_value_h[0];
+						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*GS, cudaMemcpyDeviceToHost));
+						for (int i = 0; i < GS; i++) local_value += local_value_h[i];
 						// printf("local_value=%d\n\n", local_value);
 					}
-					// process_test<T><<<(N+BS-1)/BS, BS>>>(parent_data_d, end_vid-begin_vid);
+					// process_test<T><<<GS, BS>>>(parent_data_d, end_vid-begin_vid);
 				}
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);

@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*2)
+#define N ((long)1024*1024*2048)
 #define BS 1024
 #define GS (N+BS-1)/BS
 
@@ -348,23 +348,28 @@ class Graph {
         // char *buffer_mem_h = (char*)malloc(sizeof(char)*IOSIZE);
         char *buffer_mem_d;
         CHECK(cudaMalloc((void **)&buffer_mem_d, sizeof(char) * IOSIZE / PART_SIZE));
+		CHECK(cudaMemset(buffer_mem_d, 0, sizeof(char) * IOSIZE / PART_SIZE));
 
         int x = partitions / partition_batch;
         int parent_data_size = (vertices + x - 1) / x;
         T *parent_data_mem_d;
         CHECK(cudaMalloc((void **)&parent_data_mem_d, sizeof(T) * parent_data_size));
+		CHECK(cudaMemset(parent_data_mem_d, -1, sizeof(T) * parent_data_size));
 
         unsigned long long int *active_in_d;
         CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size)));
+		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size)));
         CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice));
 
         unsigned long long int *active_out_d;
         CHECK(cudaMalloc((void **)&active_out_d, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size)));
+		CHECK(cudaMemset(active_out_d, 0, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size)));
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice));
 
 		T *local_value_mem_h = (T*)calloc(sizeof(T), GS);
 		T *local_value_mem_d;
 		CHECK(cudaMalloc((void**)&local_value_mem_d, sizeof(T)*GS));
+		CHECK(cudaMemset(local_value_mem_d, 0, sizeof(T)*GS));
 
         long read_bytes = 0;
 

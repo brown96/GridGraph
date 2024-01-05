@@ -5,7 +5,7 @@ TARGETS= bin/firstPreprocessing bin/preprocess bin/bfs bin/wcc bin/pagerank bin/
 CXX?= g++
 CXXFLAGS?= -O3 -Wall -std=c++11 -g -fopenmp -I$(ROOT_DIR)
 NVCC=nvcc
-NVCCFLAGS= -O3 --expt-extended-lambda -std=c++11 -arch sm_60 -Xcompiler -fopenmp -I$(ROOT_DIR)
+NVCCFLAGS= -O3 -std=c++11 -arch compute_61 -code sm_61 -Xcompiler -fopenmp -I$(ROOT_DIR)
 HEADERS= $(shell find . -name '*.hpp')
 
 all: $(TARGETS)

@@ -76,8 +76,6 @@ __global__ void process_test(T *parent_data_d, int n) {
 	atomicCAS(parent_data_d+idx, -1, 1);
 }
 
-__device__ int value_d;
-
 template <typename T>
 __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
 	unsigned int tid = threadIdx.x;
@@ -85,8 +83,10 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	int start_pos = offset % edge_unit;
 
+	// 各スレッドはedge_unit分のデータを読み込む必要
 	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
 
+	// グローバル変数による単純な実装
 	if (idx==0) value_d = 0;
 
 	int pos = start_pos + edge_unit * idx;
@@ -98,13 +98,19 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 		return;
 	}
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
+		// cas(&parent_data[dst], -1, src)
 		if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
+			// __sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst))
 			atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
+			// グローバル変数をインクリメント
 			atomicAdd(&value_d, 1);
 		}
 	}
-	for (int i = 0; i < 100; i++) __syncthreads();
 
+	__syncthreads();
+	// for (int i = 0; i < 100; i++) __syncthreads();
+
+	// CPUに書き戻し
 	if (idx == 0) local_value_d[0] = value_d;
 	// if (idx == 0) printf("value_d = %d\n", value_d);
 } 

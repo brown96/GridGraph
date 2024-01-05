@@ -87,12 +87,7 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
 
-	// __shared__ T idata[BS];
-
 	if (idx==0) value_d = 0;
-
-	// idata[tid] = 0;
-	__syncthreads();
 
 	int pos = start_pos + edge_unit * idx;
 
@@ -103,19 +98,12 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 		return;
 	}
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
-		T oldValue = atomicCAS(parent_data_d+dst, -1, src);
-		if (oldValue==-1) {
+		if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
 			atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
-			// idata[tid] = 1;
 			atomicAdd(&value_d, 1);
-			__syncthreads();
 		}
 	}
-
-	// for (int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
-    //     if (tid < stride) idata[tid] += idata[tid + stride];
-    //     __syncthreads();
-    // }
+	for (int i = 0; i < 100; i++) __syncthreads();
 
 	if (idx == 0) local_value_d[0] = value_d;
 	// if (idx == 0) printf("value_d = %d\n", value_d);
@@ -506,7 +494,7 @@ public:
 						T *local_value_d = local_value_mem_d;
 						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice));
 						process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
-						CHECK(cudaDeviceSynchronize());
+						cudaDeviceSynchronize();
 						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost));
 						// printf("local_value_h[0]=%d\n", local_value_h[0]);
 						local_value += local_value_h[0];

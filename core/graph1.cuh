@@ -352,9 +352,9 @@ public:
 		CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size)));
 		CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice));
 
-		T *local_value_mem_h = (T*)calloc(sizeof(T), (N+BS-1)/BS);
+		T *local_value_mem_h = (T*)calloc(sizeof(T), 1);
 		T *local_value_mem_d;
-		CHECK(cudaMalloc((void**)&local_value_mem_d, sizeof(T)*((N+BS-1)/BS)));
+		CHECK(cudaMalloc((void**)&local_value_mem_d, sizeof(T)*1));
 
 		long read_bytes = 0;
 
@@ -492,10 +492,10 @@ public:
 						CHECK(cudaMemcpy(buffer_d, buffer+cur_buffer, sizeof(char)*IOSIZE/PART_SIZE, cudaMemcpyHostToDevice));
 						T *local_value_h = local_value_mem_h;
 						T *local_value_d = local_value_mem_d;
-						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*((N+BS-1)/BS), cudaMemcpyHostToDevice));
+						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*1, cudaMemcpyHostToDevice));
 						process_e<T><<<(N+BS-1)/BS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
 						cudaDeviceSynchronize();
-						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*((N+BS-1)/BS), cudaMemcpyDeviceToHost));
+						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 						// printf("local_value_h[0]=%d\n", local_value_h[0]);
 						local_value += local_value_h[0];
 						// printf("local_value=%d\n\n", local_value);

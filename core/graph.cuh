@@ -88,7 +88,7 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	int start_pos = offset % edge_unit;
 
-	if (idx > (bytes - start_pos) / edge_unit) return;
+	if (idx > (bytes - start_pos) / edge_unit - 1) return;
 
     int pos = start_pos + edge_unit * idx;
 
@@ -98,11 +98,14 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 	if (src < begin_vid || src >= end_vid) {
 		return;
 	}
+    // if (dst > 75870) printf("thread %d: src=%d, dst=%d\n", idx, src, dst);
+    // if (dst > 75870) printf("thread %d: parent_data[%d] = %d\n", idx, dst, parent_data_d[dst]);
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
         T oldValue = atomicCAS(parent_data_d+dst, -1, src);
         if (oldValue == -1) {
 		    atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
 		    sdata[tid] = 1;
+            // if (idx > 150000) printf("thread %d: src=%d, dst=%d\n", idx, src, dst);
         }
 	}
 	
@@ -353,14 +356,15 @@ class Graph {
 		CHECK(cudaMemset(buffer_mem_d, 0, sizeof(char) * IOSIZE / PART_SIZE));
 
         unsigned long long int *active_in_d;
-        CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size)));
-		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size)));
-        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size), cudaMemcpyHostToDevice));
+        CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
+		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
+        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1), cudaMemcpyHostToDevice));
 
         unsigned long long int *active_out_d;
-        CHECK(cudaMalloc((void **)&active_out_d, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size)));
-		CHECK(cudaMemset(active_out_d, 0, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size)));
-        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size), cudaMemcpyHostToDevice));
+        CHECK(cudaMalloc((void **)&active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1)));
+		CHECK(cudaMemset(active_out_d, 0, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1)));
+        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1), cudaMemcpyHostToDevice));
+        // printf("%lx\n", WORD_OFFSET(active_out->size));
 
 		T *local_value_mem_h = (T*)calloc(sizeof(T), GS);
 		T *local_value_mem_d;
@@ -520,7 +524,7 @@ class Graph {
                     post_source_window(std::make_pair(begin_vid, end_vid));
                     // printf("post %d %d\n", begin_vid, end_vid);
                 }
-                CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int) * WORD_OFFSET(active_out->size), cudaMemcpyDeviceToHost));
+                CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1), cudaMemcpyDeviceToHost));
 
                 break;
             default:

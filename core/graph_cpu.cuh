@@ -59,10 +59,11 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data) {
+int process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data, int count) {
 	if (parent_data[dst]==-1) {
 		if (cas(&parent_data[dst], -1, src)) {
 			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
+			// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
 			return 1;
 		}
 	}
@@ -338,7 +339,7 @@ public:
 							VertexId & src = *(VertexId*)(buffer+pos);
 							VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
 							if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-								local_value += process(src, dst, parent_data, active_out->data);
+								local_value += process(src, dst, parent_data, active_out->data, 0);
 							}
 						}
 					}
@@ -429,6 +430,7 @@ public:
 							assert(bytes>0);
 							local_read_bytes += bytes;
 
+							int count = 0;
 							// CHECK: start position should be offset % edge_unit
 							for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 								VertexId & src = *(VertexId*)(buffer+pos);
@@ -436,10 +438,13 @@ public:
 								if (src < begin_vid || src >= end_vid) {
 									continue;
 								}
+								if (dst > 75870) printf("count %d: src=%d, dst=%d\n", count, src, dst);
 								if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-									local_value += process(src, dst, parent_data, active_out->data);
+									local_value += process(src, dst, parent_data, active_out->data, count);
 								}
+								count++;
 							}
+							// printf("count = %d\n", count);
 						}
 						write_add(&value, local_value);
 						write_add(&read_bytes, local_read_bytes);

@@ -438,13 +438,13 @@ public:
 								if (src < begin_vid || src >= end_vid) {
 									continue;
 								}
-								if (dst > 75870) printf("count %d: src=%d, dst=%d\n", count, src, dst);
+								// if (dst > 75870) printf("count %d: src=%d, dst=%d\n", count, src, dst);
 								if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
 									local_value += process(src, dst, parent_data, active_out->data, count);
 								}
 								count++;
 							}
-							// printf("count = %d\n", count);
+							printf("count = %d\n", count);
 						}
 						write_add(&value, local_value);
 						write_add(&read_bytes, local_read_bytes);

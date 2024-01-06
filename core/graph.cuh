@@ -18,11 +18,11 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*32)
+#define N ((long)1024*1024)
 #define BS 1024
 #define GS (N+BS-1)/BS
 
-#define PART_SIZE 8
+#define PART_SIZE 2
 
 #include <unistd.h>
 
@@ -88,7 +88,7 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	int start_pos = offset % edge_unit;
 
-	if (idx > (bytes - start_pos) / edge_unit - 1) return;
+	if (idx > bytes/ edge_unit) return;
 
     int pos = start_pos + edge_unit * idx;
 
@@ -120,7 +120,7 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	if (tid == 0) local_value_d[blockIdx.x] = sdata[0];
 	// if (idx == 0) printf("value_d = %d\n", value_d);
-    // if (idx == (bytes - start_pos) / edge_unit) printf("count = %d\n", idx);
+    // if (idx == bytes / edge_unit) printf("count = %d\n", idx);
 } 
 
 class Graph {
@@ -355,6 +355,12 @@ class Graph {
         CHECK(cudaMalloc((void **)&buffer_mem_d, sizeof(char) * IOSIZE / PART_SIZE));
 		CHECK(cudaMemset(buffer_mem_d, 0, sizeof(char) * IOSIZE / PART_SIZE));
 
+        int x = partitions / partition_batch;
+        int parent_data_size = (vertices + x - 1) / x;
+        T *parent_data_mem_d;
+        CHECK(cudaMalloc((void **)&parent_data_mem_d, sizeof(T) * parent_data_size));
+		CHECK(cudaMemset(parent_data_mem_d, -1, sizeof(T) * parent_data_size));
+
         unsigned long long int *active_in_d;
         CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
 		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
@@ -487,9 +493,8 @@ class Graph {
 
                     tasks.push(std::make_tuple(-1, 0, 0));
 
-                    T *parent_data_d;
-                    CHECK(cudaMalloc((void **)&parent_data_d, sizeof(T) * (end_vid-begin_vid)));
-                    CHECK(cudaMemcpy(parent_data_d, parent_data + begin_vid, sizeof(T) * (end_vid-begin_vid), cudaMemcpyHostToDevice));
+                    T *parent_data_d = parent_data_mem_d;
+                    CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T) * parent_data_size, cudaMemcpyHostToDevice));
 
                     T local_value = zero;
                     long local_read_bytes = 0;

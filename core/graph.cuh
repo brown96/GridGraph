@@ -18,11 +18,11 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*2048)
+#define N ((long)1024*1024*32)
 #define BS 1024
 #define GS (N+BS-1)/BS
 
-#define PART_SIZE 1
+#define PART_SIZE 8
 
 #include <unistd.h>
 
@@ -88,7 +88,7 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	int start_pos = offset % edge_unit;
 
-	if (start_pos + edge_unit*idx + edge_unit > bytes) return;
+	if (idx > (bytes - start_pos) / edge_unit) return;
 
     int pos = start_pos + edge_unit * idx;
 
@@ -99,10 +99,11 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 		return;
 	}
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
-		if (atomicCAS(parent_data_d+dst, -1, src)==-1) {
-			atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
-			sdata[tid] = 1;
-		}
+        T oldValue = atomicCAS(parent_data_d+dst, -1, src);
+        if (oldValue == -1) {
+		    atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
+		    sdata[tid] = 1;
+        }
 	}
 	
 	__syncthreads();
@@ -116,6 +117,7 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	if (tid == 0) local_value_d[blockIdx.x] = sdata[0];
 	// if (idx == 0) printf("value_d = %d\n", value_d);
+    // if (idx == (bytes - start_pos) / edge_unit) printf("count = %d\n", idx);
 } 
 
 class Graph {
@@ -350,12 +352,6 @@ class Graph {
         CHECK(cudaMalloc((void **)&buffer_mem_d, sizeof(char) * IOSIZE / PART_SIZE));
 		CHECK(cudaMemset(buffer_mem_d, 0, sizeof(char) * IOSIZE / PART_SIZE));
 
-        int x = partitions / partition_batch;
-        int parent_data_size = (vertices + x - 1) / x;
-        T *parent_data_mem_d;
-        CHECK(cudaMalloc((void **)&parent_data_mem_d, sizeof(T) * parent_data_size));
-		CHECK(cudaMemset(parent_data_mem_d, -1, sizeof(T) * parent_data_size));
-
         unsigned long long int *active_in_d;
         CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size)));
 		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * WORD_OFFSET(bitmap->size)));
@@ -418,8 +414,7 @@ class Graph {
                         }
                         write_add(&value, local_value);
                         write_add(&read_bytes, local_read_bytes);
-                    },
-                                         ti);
+                    }, ti);
                 }
                 fin = open((path + "/row").c_str(), read_mode);
                 // posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
@@ -488,8 +483,9 @@ class Graph {
 
                     tasks.push(std::make_tuple(-1, 0, 0));
 
-                    T *parent_data_d = parent_data_mem_d;
-                    CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T) * parent_data_size, cudaMemcpyHostToDevice));
+                    T *parent_data_d;
+                    CHECK(cudaMalloc((void **)&parent_data_d, sizeof(T) * (end_vid-begin_vid)));
+                    CHECK(cudaMemcpy(parent_data_d, parent_data + begin_vid, sizeof(T) * (end_vid-begin_vid), cudaMemcpyHostToDevice));
 
                     T local_value = zero;
                     long local_read_bytes = 0;
@@ -519,7 +515,7 @@ class Graph {
 				}
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
-				CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*parent_data_size, cudaMemcpyDeviceToHost));
+				CHECK(cudaMemcpy(parent_data + begin_vid, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost));
 
                     post_source_window(std::make_pair(begin_vid, end_vid));
                     // printf("post %d %d\n", begin_vid, end_vid);

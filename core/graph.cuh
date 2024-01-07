@@ -507,6 +507,22 @@ class Graph {
                         assert(bytes > 0);
                         local_read_bytes += bytes;
 
+                        // 現在のバッファの初めのソース頂点とデスティネーション頂点を取得
+                        VertexId & src = *(VertexId*)(buffer);
+						VertexId & dst = *(VertexId*)(buffer+sizeof(VertexId));
+
+                        // ソース頂点を含むパーティションとその開始頂点、終了頂点を求める
+                        int pid_src = get_partition_id(vertices, partitions, src);
+                        VertexId begin_vid_src, end_vid_src;
+                        std::tie(begin_vid_src, end_vid_src) = get_partition_range(vertices, partitions, pid_src);
+                        // printf("src = %d, begin_vid = %d, end_vid = %d\n", src, begin_vid_src, end_vid_src);
+
+                        // デスティネーション頂点を含むパーティションとその開始頂点、終了頂点を求める
+                        int pid_dst = get_partition_id(vertices, partitions, dst);
+                        VertexId begin_vid_dst, end_vid_dst;
+                        std::tie(begin_vid_dst, end_vid_dst) = get_partition_range(vertices, partitions, pid_dst);
+                        // printf("dst = %d, begin_vid = %d, end_vid = %d\n", dst, begin_vid_dst, end_vid_dst);
+
 					    for (int cur_buffer = 0; cur_buffer < IOSIZE; cur_buffer += IOSIZE/PART_SIZE) {
 						    char *buffer_d = buffer_mem_d;
 						    CHECK(cudaMemcpy(buffer_d, buffer+cur_buffer, sizeof(char)*IOSIZE/PART_SIZE, cudaMemcpyHostToDevice));

@@ -22,8 +22,6 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define BS 1024
 #define GS (N+BS-1)/BS
 
-#define PART_SIZE 8
-
 #include <unistd.h>
 
 #include <cmath>
@@ -76,7 +74,7 @@ __global__ void process_test(T *parent_data_d, int n) {
 }
 
 template <typename T>
-__global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, long offset, long bytes, int edge_unit, int begin_vid, int end_vid) {
+__global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, int begin_vid, int end_vid, int n) {
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -86,24 +84,14 @@ __global__ void process_e(char *buffer_d, unsigned long long int *active_in_d, u
 
 	__syncthreads();
 
-	int start_pos = offset % edge_unit;
+	if (idx >= n) return;
 
-	if (idx > (bytes - start_pos) / edge_unit - 1) return;
+    if (src_d[idx] == -1 || dst_d[idx] == -1) return;
 
-    int pos = start_pos + edge_unit * idx;
-
-    int &src = *(int *)(buffer_d + pos);
-    int &dst = *(int *)(buffer_d + pos + sizeof(int));
-
-	if (src < begin_vid || src >= end_vid) {
-		return;
-	}
-    // if (dst > 75870) printf("thread %d: src=%d, dst=%d\n", idx, src, dst);
-    // if (dst > 75870) printf("thread %d: parent_data[%d] = %d\n", idx, dst, parent_data_d[dst]);
-	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src)] & (1ull<<BIT_OFFSET(src))) {
-        T oldValue = atomicCAS(parent_data_d+dst, -1, src);
+	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])] & (1ull<<BIT_OFFSET(src_d[idx]))) {
+        T oldValue = atomicCAS(parent_data_d+dst_d[idx], -1, src_d[idx]);
         if (oldValue == -1) {
-		    atomicOr(active_out_d+WORD_OFFSET(dst), 1ull<<BIT_OFFSET(dst));
+		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx]), 1ull<<BIT_OFFSET(dst_d[idx]));
 		    sdata[tid] = 1;
             // if (idx > 150000) printf("thread %d: src=%d, dst=%d\n", idx, src, dst);
         }
@@ -350,11 +338,6 @@ class Graph {
         Queue<std::tuple<int, long, long>> tasks(65536);
         std::vector<std::thread> threads;
 
-        // char *buffer_mem_h = (char*)malloc(sizeof(char)*IOSIZE);
-        char *buffer_mem_d;
-        CHECK(cudaMalloc((void **)&buffer_mem_d, sizeof(char) * IOSIZE / PART_SIZE));
-		CHECK(cudaMemset(buffer_mem_d, 0, sizeof(char) * IOSIZE / PART_SIZE));
-
         unsigned long long int *active_in_d;
         CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
 		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
@@ -502,24 +485,46 @@ class Graph {
                         long bytes = pread(fin, buffer, length, offset);
                         assert(bytes > 0);
                         local_read_bytes += bytes;
+                        int n = (bytes - (offset % edge_unit)) / edge_unit;
+                        VertexId *src_h = (VertexId*)malloc(sizeof(VertexId)*n);
+                        VertexId *dst_h = (VertexId*)malloc(sizeof(VertexId)*n);
+                        
+                        int id = 0;
+                        for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
+                            VertexId & src = *(VertexId*)(buffer+pos);
+                            VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+                            if (src < begin_vid || src >= end_vid) {
+                                src_h[id] = -1;
+                                dst_h[id] = -1;
+                                id++;
+                                continue;
+                            }
+                            src_h[id] = src;
+                            dst_h[id] = dst;
+                            id++;
+                        }
+                        // printf("id = %d, n = %d\n", id, n);
 
-					for (int cur_buffer = 0; cur_buffer < IOSIZE; cur_buffer += IOSIZE/PART_SIZE) {
-						char *buffer_d = buffer_mem_d;
-						CHECK(cudaMemcpy(buffer_d, buffer+cur_buffer, sizeof(char)*IOSIZE/PART_SIZE, cudaMemcpyHostToDevice));
+                        int *src_d, *dst_d;
+                        CHECK(cudaMalloc((void**)&src_d, sizeof(int)*n));
+                        CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*n));
+                        CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*n, cudaMemcpyHostToDevice));
+                        CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*n, cudaMemcpyHostToDevice));
+
 						T *local_value_h = local_value_mem_h;
 						T *local_value_d = local_value_mem_d;
 						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*GS, cudaMemcpyHostToDevice));
-						process_e<T><<<GS, BS>>>(buffer_d, active_in_d, active_out_d, parent_data_d, local_value_d, offset, bytes, edge_unit, begin_vid, end_vid);
+
+						process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, begin_vid, end_vid, n);
 						cudaDeviceSynchronize();
 						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*GS, cudaMemcpyDeviceToHost));
 						for (int i = 0; i < GS; i++) local_value += local_value_h[i];
 						// printf("local_value=%d\n\n", local_value);
-					}
-					// process_test<T><<<GS, BS>>>(parent_data_d, end_vid-begin_vid);
-				}
-				write_add(&value, local_value);
-				write_add(&read_bytes, local_read_bytes);
-				CHECK(cudaMemcpy(parent_data + begin_vid, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost));
+					    // process_test<T><<<GS, BS>>>(parent_data_d, end_vid-begin_vid);
+				    }
+				    write_add(&value, local_value);
+				    write_add(&read_bytes, local_read_bytes);
+				    CHECK(cudaMemcpy(parent_data + begin_vid, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost));
 
                     post_source_window(std::make_pair(begin_vid, end_vid));
                     // printf("post %d %d\n", begin_vid, end_vid);

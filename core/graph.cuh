@@ -202,7 +202,7 @@ class Graph {
                     end_vid = get_partition_range(vertices, partitions, cur_partition + partition_batch).first;
                 }
                 pre(std::make_pair(begin_vid, end_vid));
-#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
+                #pragma omp parallel for schedule(dynamic) num_threads(parallelism)
                 for (int partition_id = cur_partition; partition_id < cur_partition + partition_batch; partition_id++) {
                     if (partition_id < partitions) {
                         T local_value = zero;
@@ -214,11 +214,11 @@ class Graph {
                         write_add(&value, local_value);
                     }
                 }
-#pragma omp barrier
+                #pragma omp barrier
                 post(std::make_pair(begin_vid, end_vid));
             }
         } else {
-#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
+            #pragma omp parallel for schedule(dynamic) num_threads(parallelism)
             for (int partition_id = 0; partition_id < partitions; partition_id++) {
                 T local_value = zero;
                 VertexId begin_vid, end_vid;
@@ -251,7 +251,7 @@ class Graph {
                 }
                 write_add(&value, local_value);
             }
-#pragma omp barrier
+            #pragma omp barrier
         }
         return value;
     }
@@ -296,7 +296,7 @@ class Graph {
             for (int i = 0; i < partitions; i++) {
                 should_access_shard[i] = false;
             }
-#pragma omp parallel for schedule(dynamic) num_threads(parallelism)
+            #pragma omp parallel for schedule(dynamic) num_threads(parallelism)
             for (int partition_id = 0; partition_id < partitions; partition_id++) {
                 VertexId begin_vid, end_vid;
                 std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
@@ -310,7 +310,7 @@ class Graph {
                     i = (WORD_OFFSET(i) + 1) << 6;
                 }
             }
-#pragma omp barrier
+            #pragma omp barrier
         }
 
         T value = zero;
@@ -432,11 +432,6 @@ class Graph {
                     }
 
                     tasks.push(std::make_tuple(-1, 0, 0));
-
-                    // 二段階目のパーティションサイズのparent領域確保
-                    // T *parent_data_d;
-                    // CHECK(cudaMalloc((void **)&parent_data_d, sizeof(T) * (end_vid-begin_vid)));
-                    // CHECK(cudaMemcpy(parent_data_d, parent_data + begin_vid, sizeof(T) * (end_vid-begin_vid), cudaMemcpyHostToDevice));
 
                     T local_value = zero;
                     long local_read_bytes = 0;

@@ -81,35 +81,13 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
 
     if (idx >= n) return;
 
-	__shared__ T sdata[BS];
-
-	sdata[tid] = 0;
-
-	__syncthreads();
-
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])-WORD_OFFSET(src_begin_vid)] & (1ull<<BIT_OFFSET(src_d[idx]))) {
         if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
 		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx])-WORD_OFFSET(dst_begin_vid), 1ull<<BIT_OFFSET(dst_d[idx]));
-		    sdata[tid] = 1;
+		    atomicAdd(local_value_d, 1);
             // if (idx > 150000) printf("thread %d: src=%d, dst=%d\n", idx, src_d[idx], dst_d[idx]);
         }
 	}
-	
-	__syncthreads();
-
-	for (int s = 1; s < blockDim.x; s *= 2) {
-        if (tid % (2 * s) == 0) {
-            sdata[tid] += sdata[tid + s];
-        }
-        __syncthreads();
-    }
-
-	if (tid == 0) {
-        local_value_d[blockIdx.x] = sdata[0];
-        // if (sdata[0] != 0) printf("local_value_d[%d] = %d\n", blockIdx.x, local_value_d[blockIdx.x]);
-    }
-	// if (idx == 0) printf("value_d = %d\n", value_d);
-    // if (idx == bytes / edge_unit) printf("count = %d\n", idx);
 } 
 
 class Graph {
@@ -515,7 +493,7 @@ class Graph {
                         parent_size = sizeof(T)*(dst_end_vid - dst_begin_vid);
                         active_in_size = sizeof(unsigned long long int)*(WORD_OFFSET(src_end_vid) - WORD_OFFSET(src_begin_vid));
                         active_out_size = sizeof(unsigned long long int)*(WORD_OFFSET(dst_end_vid) - WORD_OFFSET(dst_begin_vid));
-                        calc_size = sizeof(T)*GS;
+                        calc_size = sizeof(T)*1;
                         long remain_size = GPU_SIZE - parent_size - active_in_size - active_out_size - calc_size;
                         long edge_split_size = (edge_size + remain_size - 1) / remain_size; // GPUで使用可能な残りのメモリ量でbufferから読みだされたエッジのサイズを割り、切り上げる
 
@@ -525,10 +503,10 @@ class Graph {
                         // CPUでGPUにエッジの情報を渡し、カーネルを実行する処理
                         for (int i = 0; i < n; i += edges) {
                             // GPUで計算した値を集計するための領域を確保
-		                    T *local_value_h = (T*)calloc(sizeof(T), GS);
+		                    T *local_value_h = (T*)calloc(sizeof(T), 1);
 		                    T *local_value_d;
-		                    CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*GS));
-		                    CHECK(cudaMemset(local_value_d, 0, sizeof(T)*GS));
+		                    CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
+		                    CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
 
                             // 必要なエッジの領域確保数をedgesで初期化
                             int pass_size = edges;
@@ -542,8 +520,8 @@ class Graph {
                             CHECK(cudaMemcpy(dst_d, dst_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
                             process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, pass_size);
                             cudaDeviceSynchronize();
-                            CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*GS, cudaMemcpyDeviceToHost));
-						    for (int i = 0; i < GS; i++) local_value += local_value_h[i];
+                            CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
+						    local_value += *local_value_h;
                         }
                         CHECK(cudaMemcpy(parent_data + dst_begin_vid, parent_data_d, sizeof(T)*(dst_end_vid-dst_begin_vid), cudaMemcpyDeviceToHost));
                         CHECK(cudaMemcpy(active_out->data + WORD_OFFSET(dst_begin_vid), active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(dst_end_vid - dst_begin_vid)+1), cudaMemcpyDeviceToHost));

@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*32)
+#define N ((long)1024*1024)
 #define BS 1024
 #define GS (N+BS-1)/BS
 #define GPU_SIZE 8l*1024*1024*1024*2l
@@ -109,7 +109,7 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
         // if (sdata[0] != 0) printf("local_value_d[%d] = %d\n", blockIdx.x, local_value_d[blockIdx.x]);
     }
 	// if (idx == 0) printf("value_d = %d\n", value_d);
-    // if (idx == (bytes - start_pos) / edge_unit) printf("count = %d\n", idx);
+    // if (idx == bytes / edge_unit) printf("count = %d\n", idx);
 } 
 
 class Graph {

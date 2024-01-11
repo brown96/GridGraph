@@ -21,7 +21,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define GPU_SIZE 8l*1024*1024*1024*2l
+#define GPU_SIZE 8l*1024*1024*1024l*2l
 
 #include <unistd.h>
 
@@ -81,13 +81,12 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
 
     if (idx >= n) return;
 
-	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])-WORD_OFFSET(src_begin_vid)] & (1ull<<BIT_OFFSET(src_d[idx]))) {
-        if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
-		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx])-WORD_OFFSET(dst_begin_vid), 1ull<<BIT_OFFSET(dst_d[idx]));
+	// if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])-WORD_OFFSET(src_begin_vid)] & (1ull<<BIT_OFFSET(src_d[idx]))) {
+        // if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
+		    // atomicOr(active_out_d+WORD_OFFSET(dst_d[idx])-WORD_OFFSET(dst_begin_vid), 1ull<<BIT_OFFSET(dst_d[idx]));
 		    atomicAdd(local_value_d, 1);
-            // if (idx > 150000) printf("thread %d: src=%d, dst=%d\n", idx, src_d[idx], dst_d[idx]);
-        }
-	}
+        // }
+	// }
 } 
 
 class Graph {
@@ -516,6 +515,7 @@ class Graph {
                             process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, pass_size);
                             cudaDeviceSynchronize();
                             CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
+                            printf("分割数: %ld, local_value=%d\n", edge_split_size, *local_value_h);
 						    local_value += *local_value_h;
                         }
                         CHECK(cudaMemcpy(parent_data + dst_begin_vid, parent_data_d, sizeof(T)*(dst_end_vid-dst_begin_vid), cudaMemcpyDeviceToHost));

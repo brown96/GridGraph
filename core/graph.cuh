@@ -21,6 +21,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*32)
 #define BS 1024
 #define GS (N+BS-1)/BS
+#define GPU_SIZE 8l*1024*1024*1024*2l
 
 #include <unistd.h>
 
@@ -74,9 +75,11 @@ __global__ void process_test(T *parent_data_d, int n) {
 }
 
 template <typename T>
-__global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, int begin_vid, int end_vid, int n) {
+__global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *parent_data_d, T *local_value_d, int src_begin_vid, int dst_begin_vid, int n) {
     unsigned int tid = threadIdx.x;
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+    if (idx >= n) return;
 
 	__shared__ T sdata[BS];
 
@@ -84,16 +87,11 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
 
 	__syncthreads();
 
-	if (idx >= n) return;
-
-    if (src_d[idx] == -1 || dst_d[idx] == -1) return;
-
-	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])] & (1ull<<BIT_OFFSET(src_d[idx]))) {
-        T oldValue = atomicCAS(parent_data_d+dst_d[idx], -1, src_d[idx]);
-        if (oldValue == -1) {
-		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx]), 1ull<<BIT_OFFSET(dst_d[idx]));
+	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])-WORD_OFFSET(src_begin_vid)] & (1ull<<BIT_OFFSET(src_d[idx]))) {
+        if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
+		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx])-WORD_OFFSET(dst_begin_vid), 1ull<<BIT_OFFSET(dst_d[idx]));
 		    sdata[tid] = 1;
-            // if (idx > 150000) printf("thread %d: src=%d, dst=%d\n", idx, src, dst);
+            // if (idx > 150000) printf("thread %d: src=%d, dst=%d\n", idx, src_d[idx], dst_d[idx]);
         }
 	}
 	
@@ -106,7 +104,10 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
         __syncthreads();
     }
 
-	if (tid == 0) local_value_d[blockIdx.x] = sdata[0];
+	if (tid == 0) {
+        local_value_d[blockIdx.x] = sdata[0];
+        // if (sdata[0] != 0) printf("local_value_d[%d] = %d\n", blockIdx.x, local_value_d[blockIdx.x]);
+    }
 	// if (idx == 0) printf("value_d = %d\n", value_d);
     // if (idx == (bytes - start_pos) / edge_unit) printf("count = %d\n", idx);
 } 
@@ -338,22 +339,6 @@ class Graph {
         Queue<std::tuple<int, long, long>> tasks(65536);
         std::vector<std::thread> threads;
 
-        unsigned long long int *active_in_d;
-        CHECK(cudaMalloc((void **)&active_in_d, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
-		CHECK(cudaMemset(active_in_d, 0, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1)));
-        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int) * (WORD_OFFSET(bitmap->size)+1), cudaMemcpyHostToDevice));
-
-        unsigned long long int *active_out_d;
-        CHECK(cudaMalloc((void **)&active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1)));
-		CHECK(cudaMemset(active_out_d, 0, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1)));
-        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1), cudaMemcpyHostToDevice));
-        // printf("%lx\n", WORD_OFFSET(active_out->size));
-
-		T *local_value_mem_h = (T*)calloc(sizeof(T), GS);
-		T *local_value_mem_d;
-		CHECK(cudaMalloc((void**)&local_value_mem_d, sizeof(T)*GS));
-		CHECK(cudaMemset(local_value_mem_d, 0, sizeof(T)*GS));
-
         long read_bytes = 0;
 
         long total_bytes = 0;
@@ -470,9 +455,10 @@ class Graph {
 
                     tasks.push(std::make_tuple(-1, 0, 0));
 
-                    T *parent_data_d;
-                    CHECK(cudaMalloc((void **)&parent_data_d, sizeof(T) * (end_vid-begin_vid)));
-                    CHECK(cudaMemcpy(parent_data_d, parent_data + begin_vid, sizeof(T) * (end_vid-begin_vid), cudaMemcpyHostToDevice));
+                    // 二段階目のパーティションサイズのparent領域確保
+                    // T *parent_data_d;
+                    // CHECK(cudaMalloc((void **)&parent_data_d, sizeof(T) * (end_vid-begin_vid)));
+                    // CHECK(cudaMemcpy(parent_data_d, parent_data + begin_vid, sizeof(T) * (end_vid-begin_vid), cudaMemcpyHostToDevice));
 
                     T local_value = zero;
                     long local_read_bytes = 0;
@@ -490,46 +476,87 @@ class Graph {
                         VertexId *dst_h = (VertexId*)malloc(sizeof(VertexId)*n);
                         
                         int id = 0;
+                        // bufferに格納されたエッジの情報をソース頂点の配列とデスティネーション頂点の配列として保存
                         for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
                             VertexId & src = *(VertexId*)(buffer+pos);
                             VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-                            if (src < begin_vid || src >= end_vid) {
-                                src_h[id] = -1;
-                                dst_h[id] = -1;
-                                id++;
-                                continue;
-                            }
                             src_h[id] = src;
                             dst_h[id] = dst;
                             id++;
                         }
                         // printf("id = %d, n = %d\n", id, n);
 
-                        int *src_d, *dst_d;
-                        CHECK(cudaMalloc((void**)&src_d, sizeof(int)*n));
-                        CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*n));
-                        CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*n, cudaMemcpyHostToDevice));
-                        CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*n, cudaMemcpyHostToDevice));
+                        // bufferに格納されたエッジのソース頂点とデスティネーション頂点が含まれている各パーティションの開始頂点と終了頂点を計算
+                        int src_partition_id = get_partition_id(vertices, partitions, src_h[0]);
+                        VertexId src_begin_vid, src_end_vid;
+                        std::tie(src_begin_vid, src_end_vid) = get_partition_range(vertices, partitions, src_partition_id);
+                        int dst_partition_id = get_partition_id(vertices, partitions, dst_h[0]);
+                        VertexId dst_begin_vid, dst_end_vid;
+                        std::tie(dst_begin_vid, dst_end_vid) = get_partition_range(vertices, partitions, dst_partition_id);
 
-						T *local_value_h = local_value_mem_h;
-						T *local_value_d = local_value_mem_d;
-						CHECK(cudaMemcpy(local_value_d, local_value_h, sizeof(T)*GS, cudaMemcpyHostToDevice));
+                        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
+                        T *parent_data_d;
+                        CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*(dst_end_vid - dst_begin_vid)));
+                        CHECK(cudaMemcpy(parent_data_d, parent_data+dst_begin_vid, sizeof(T)*(dst_end_vid - dst_begin_vid), cudaMemcpyHostToDevice));
 
-						process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, begin_vid, end_vid, n);
-						cudaDeviceSynchronize();
-						CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*GS, cudaMemcpyDeviceToHost));
-						for (int i = 0; i < GS; i++) local_value += local_value_h[i];
+                        // active_inの領域をデバイス側に確保(active_inはソース頂点のインデックスによってのみアクセス)
+                        unsigned long long int *active_in_d;
+                        CHECK(cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*(WORD_OFFSET(src_end_vid) - WORD_OFFSET(src_begin_vid) + 1)));
+                        CHECK(cudaMemcpy(active_in_d, bitmap->data + WORD_OFFSET(src_begin_vid), sizeof(unsigned long long int)*(WORD_OFFSET(src_end_vid) - WORD_OFFSET(src_begin_vid) + 1), cudaMemcpyHostToDevice));
+
+                        // active_outの領域をデバイス側に確保(active_outはデスティネーション頂点のインデックスによってのみアクセス)
+                        unsigned long long int *active_out_d;
+                        CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*(WORD_OFFSET(dst_end_vid) - WORD_OFFSET(dst_begin_vid) + 1)));
+                        CHECK(cudaMemcpy(active_out_d, active_out->data + WORD_OFFSET(dst_begin_vid), sizeof(unsigned long long int)*(WORD_OFFSET(dst_end_vid) - WORD_OFFSET(dst_begin_vid) + 1), cudaMemcpyHostToDevice));
+
+                        // 必要な分割数を計算
+                        long edge_size, parent_size, active_in_size, active_out_size, calc_size;
+                        edge_size = sizeof(VertexId)*n*2;
+                        parent_size = sizeof(T)*(dst_end_vid - dst_begin_vid);
+                        active_in_size = sizeof(unsigned long long int)*(WORD_OFFSET(src_end_vid) - WORD_OFFSET(src_begin_vid));
+                        active_out_size = sizeof(unsigned long long int)*(WORD_OFFSET(dst_end_vid) - WORD_OFFSET(dst_begin_vid));
+                        calc_size = sizeof(T)*GS;
+                        long remain_size = GPU_SIZE - parent_size - active_in_size - active_out_size - calc_size;
+                        long edge_split_size = (edge_size + remain_size - 1) / remain_size; // GPUで使用可能な残りのメモリ量でbufferから読みだされたエッジのサイズを割り、切り上げる
+
+                        // GPUで使用可能な残りのメモリ量のうち、GPUにデータを受け渡せる最大のエッジ数を計算
+                        int edges = remain_size / edge_unit;
+
+                        // CPUでGPUにエッジの情報を渡し、カーネルを実行する処理
+                        for (int i = 0; i < n; i += edges) {
+                            // GPUで計算した値を集計するための領域を確保
+		                    T *local_value_h = (T*)calloc(sizeof(T), GS);
+		                    T *local_value_d;
+		                    CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*GS));
+		                    CHECK(cudaMemset(local_value_d, 0, sizeof(T)*GS));
+
+                            // 必要なエッジの領域確保数をedgesで初期化
+                            int pass_size = edges;
+                            if (i + edges >= n) pass_size = n - i; //edges分のエッジが後に無い場合、必要なエッジの領域確保数はn-i
+
+                            // ソース頂点とデスティネーション頂点のデバイス領域確保
+                            int *src_d, *dst_d;
+                            CHECK(cudaMalloc((void**)&src_d, sizeof(int)*pass_size));
+                            CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*pass_size));
+                            CHECK(cudaMemcpy(src_d, src_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
+                            CHECK(cudaMemcpy(dst_d, dst_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
+                            process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, pass_size);
+                            cudaDeviceSynchronize();
+                            CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*GS, cudaMemcpyDeviceToHost));
+						    for (int i = 0; i < GS; i++) local_value += local_value_h[i];
+                        }
+                        CHECK(cudaMemcpy(parent_data + dst_begin_vid, parent_data_d, sizeof(T)*(dst_end_vid-dst_begin_vid), cudaMemcpyDeviceToHost));
+                        CHECK(cudaMemcpy(active_out->data + WORD_OFFSET(dst_begin_vid), active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(dst_end_vid - dst_begin_vid)+1), cudaMemcpyDeviceToHost));
+
 						// printf("local_value=%d\n\n", local_value);
 					    // process_test<T><<<GS, BS>>>(parent_data_d, end_vid-begin_vid);
 				    }
 				    write_add(&value, local_value);
 				    write_add(&read_bytes, local_read_bytes);
-				    CHECK(cudaMemcpy(parent_data + begin_vid, parent_data_d, sizeof(T)*(end_vid-begin_vid), cudaMemcpyDeviceToHost));
 
                     post_source_window(std::make_pair(begin_vid, end_vid));
                     // printf("post %d %d\n", begin_vid, end_vid);
                 }
-                CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(active_out->size)+1), cudaMemcpyDeviceToHost));
 
                 break;
             default:

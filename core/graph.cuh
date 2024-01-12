@@ -21,7 +21,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define GPU_SIZE 8l*1024*1024*1024l*2l
+#define GPU_SIZE 8l*1024l*1024l*1024l*2l
 
 #include <unistd.h>
 
@@ -517,9 +517,16 @@ class Graph {
                             CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
                             printf("分割数: %ld, local_value=%d\n", edge_split_size, *local_value_h);
 						    local_value += *local_value_h;
+                            CHECK(cudaFree(local_value_d));
+                            free(local_value_h);
+                            CHECK(cudaFree(src_d));
+                            CHECK(cudaFree(dst_d));
                         }
                         CHECK(cudaMemcpy(parent_data + dst_begin_vid, parent_data_d, sizeof(T)*(dst_end_vid-dst_begin_vid), cudaMemcpyDeviceToHost));
                         CHECK(cudaMemcpy(active_out->data + WORD_OFFSET(dst_begin_vid), active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(dst_end_vid - dst_begin_vid)+1), cudaMemcpyDeviceToHost));
+                        CHECK(cudaFree(parent_data_d));
+                        CHECK(cudaFree(active_in_d));
+                        CHECK(cudaFree(active_out_d));
 
 						// printf("local_value=%d\n\n", local_value);
 					    // process_test<T><<<GS, BS>>>(parent_data_d, end_vid-begin_vid);

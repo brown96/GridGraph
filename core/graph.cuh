@@ -82,14 +82,15 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
     if (idx >= n) return;
 
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])] & (1ull<<BIT_OFFSET(src_d[idx]))) {
-    //     if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
+        if (atomicCAS(parent_data_d + dst_d[idx] - dst_begin_vid, -1, src_d[idx]) == -1) {
 		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx]), 1ull<<BIT_OFFSET(dst_d[idx]));
 		    atomicAdd(local_value_d, 1);
-        // }
+        }
 	}
-    atomicCAS(parent_data_d + dst_d[idx] - dst_begin_vid, -1, 1);
+    // atomicCAS(parent_data_d + dst_d[idx], -1, 1);
     
     // if (idx == n-1) printf("thread %d: src=%d, dst=%d\n", idx, src_d[idx], dst_d[idx]);
+    // if (idx == 0) printf("partition_vertices=%d\n", partition_vertices);
 } 
 
 class Graph {
@@ -327,7 +328,7 @@ class Graph {
         // parentのデバイス側のメモリを事前に確保(※使用する前はcudaMemsetで-1に初期化する)
         int partition_vertices = (vertices + partitions - 1) / partitions;
         T *parent_data_d_mem;
-        CHECK(cudaMalloc((void**)&parent_data_d_mem, sizeof(T)*partition_vertices));
+        CHECK(cudaMalloc((void**)&parent_data_d_mem, sizeof(T)*vertices));
 
         int active_size = WORD_OFFSET(vertices-1) + 1;
 
@@ -340,6 +341,12 @@ class Graph {
         unsigned long long int *active_out_d;
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+
+        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
+        CHECK(cudaMemset(parent_data_d_mem, -1, sizeof(T)*vertices));
+        T *parent_data_d;
+        parent_data_d = parent_data_d_mem;
+        CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
 
         long read_bytes = 0;
 
@@ -492,11 +499,7 @@ class Graph {
                         std::tie(dst_begin_vid, dst_end_vid) = get_partition_range(vertices, partitions, dst_partition_id);
                         // printf("src_begin_vid=%d, src_end_vid=%d\ndst_begin_vid=%d, dst_end_vid=%d\n\n", src_begin_vid, src_end_vid, dst_begin_vid, dst_end_vid);
 
-                        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
-                        CHECK(cudaMemset(parent_data_d_mem, -1, sizeof(T)*partition_vertices));
-                        T *parent_data_d;
-                        parent_data_d = parent_data_d_mem;
-                        CHECK(cudaMemcpy(parent_data_d, parent_data + dst_begin_vid, sizeof(T)*(dst_end_vid - dst_begin_vid), cudaMemcpyHostToDevice));
+                        // CHECK(cudaMemcpy(parent_data_d, parent_data + dst_begin_vid, sizeof(T)*(dst_end_vid - dst_begin_vid), cudaMemcpyHostToDevice));
 
                         // 必要な分割数を計算
                         long edge_size, parent_size, active_in_size, active_out_size, calc_size;
@@ -524,7 +527,7 @@ class Graph {
                             CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*pass_size));
                             CHECK(cudaMemcpy(src_d, src_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
                             CHECK(cudaMemcpy(dst_d, dst_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
-                            process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, pass_size);
+                            process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, n);
                             cudaDeviceSynchronize();
                             CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
                             // printf("local_value=%d\n", *local_value_h);
@@ -534,9 +537,10 @@ class Graph {
                             // CHECK(cudaFree(src_d));
                             // CHECK(cudaFree(dst_d));
                         }
-                        CHECK(cudaMemcpy(parent_data + dst_begin_vid, parent_data_d, sizeof(T)*(dst_end_vid - dst_begin_vid), cudaMemcpyDeviceToHost));
+                        // printf("dst_begin_vid=%d\n", dst_begin_vid);
+                        CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
                         // for (int i = 0; i < vertices; i++) {
-                        //     if (parent_data[i] != -1) {
+                        //     if (parent_data[i] == -1) {
                         //         printf("parent_data[%d]=%d\n", i, parent_data[i]);
                         //     }
                         // }
@@ -554,6 +558,8 @@ class Graph {
                     post_source_window(std::make_pair(begin_vid, end_vid));
                     // printf("post %d %d\n", begin_vid, end_vid);
                 }
+                
+                CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 
                 break;
             default:

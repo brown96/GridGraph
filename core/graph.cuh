@@ -82,11 +82,13 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
     if (idx >= n) return;
 
 	// if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])-WORD_OFFSET(src_begin_vid)] & (1ull<<BIT_OFFSET(src_d[idx]))) {
-        // if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
-		    // atomicOr(active_out_d+WORD_OFFSET(dst_d[idx])-WORD_OFFSET(dst_begin_vid), 1ull<<BIT_OFFSET(dst_d[idx]));
+    //     if (atomicCAS(parent_data_d+dst_d[idx]-dst_begin_vid, -1, src_d[idx]) == -1) {
+	// 	    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx])-WORD_OFFSET(dst_begin_vid), 1ull<<BIT_OFFSET(dst_d[idx]));
 		    atomicAdd(local_value_d, 1);
         // }
 	// }
+    atomicCAS(parent_data_d+1, -1, 1);
+    // if (idx == n-1) printf("thread %d: src=%d, dst=%d\n", idx, src_d[idx], dst_d[idx]);
 } 
 
 class Graph {
@@ -316,6 +318,13 @@ class Graph {
         Queue<std::tuple<int, long, long>> tasks(65536);
         std::vector<std::thread> threads;
 
+        // GPUで計算した値を集計するための領域を確保
+        T *local_value_h = (T*)calloc(sizeof(T), 1);
+        T *local_value_d;
+        CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
+
+        int partition_vertices = (vertices + partitions - 1) / partitions;
+
         long read_bytes = 0;
 
         long total_bytes = 0;
@@ -465,11 +474,15 @@ class Graph {
                         int dst_partition_id = get_partition_id(vertices, partitions, dst_h[0]);
                         VertexId dst_begin_vid, dst_end_vid;
                         std::tie(dst_begin_vid, dst_end_vid) = get_partition_range(vertices, partitions, dst_partition_id);
+                        // printf("src_begin_vid=%d, src_end_vid=%d\ndst_begin_vid=%d, dst_end_vid=%d\n\n", src_begin_vid, src_end_vid, dst_begin_vid, dst_end_vid);
 
                         // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
+                        T *parent_data_h = (T*)malloc(sizeof(T)*(dst_end_vid - dst_begin_vid));
+                        parent_data_h = parent_data + dst_begin_vid;
                         T *parent_data_d;
                         CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*(dst_end_vid - dst_begin_vid)));
-                        CHECK(cudaMemcpy(parent_data_d, parent_data+dst_begin_vid, sizeof(T)*(dst_end_vid - dst_begin_vid), cudaMemcpyHostToDevice));
+                        CHECK(cudaMemcpy(parent_data_d, parent_data_h, sizeof(T)*(dst_end_vid - dst_begin_vid), cudaMemcpyHostToDevice));
+                        // printf("parent_data_h[n-1]=%d\n", parent_data_h[dst_end_vid - dst_begin_vid - 1]);
 
                         // active_inの領域をデバイス側に確保(active_inはソース頂点のインデックスによってのみアクセス)
                         unsigned long long int *active_in_d;
@@ -496,12 +509,7 @@ class Graph {
 
                         // CPUでGPUにエッジの情報を渡し、カーネルを実行する処理
                         for (int i = 0; i < n; i += edges) {
-                            // GPUで計算した値を集計するための領域を確保
-		                    T *local_value_h = (T*)calloc(sizeof(T), 1);
-		                    T *local_value_d;
-		                    CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
-		                    CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
-
+                            CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
                             // 必要なエッジの領域確保数をedgesで初期化
                             int pass_size = edges;
                             if (i + edges >= n) pass_size = n - i; //edges分のエッジが後に無い場合、必要なエッジの領域確保数はn-i
@@ -515,18 +523,24 @@ class Graph {
                             process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, pass_size);
                             cudaDeviceSynchronize();
                             CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
-                            printf("分割数: %ld, local_value=%d\n", edge_split_size, *local_value_h);
+                            printf("local_value=%d\n", *local_value_h);
 						    local_value += *local_value_h;
-                            CHECK(cudaFree(local_value_d));
-                            free(local_value_h);
-                            CHECK(cudaFree(src_d));
-                            CHECK(cudaFree(dst_d));
+                            // CHECK(cudaFree(local_value_d));
+                            // free(local_value_h);
+                            // CHECK(cudaFree(src_d));
+                            // CHECK(cudaFree(dst_d));
                         }
-                        CHECK(cudaMemcpy(parent_data + dst_begin_vid, parent_data_d, sizeof(T)*(dst_end_vid-dst_begin_vid), cudaMemcpyDeviceToHost));
+                        CHECK(cudaMemcpy(parent_data_h, parent_data_d, sizeof(T)*(dst_end_vid-dst_begin_vid), cudaMemcpyDeviceToHost));
                         CHECK(cudaMemcpy(active_out->data + WORD_OFFSET(dst_begin_vid), active_out_d, sizeof(unsigned long long int) * (WORD_OFFSET(dst_end_vid - dst_begin_vid)+1), cudaMemcpyDeviceToHost));
-                        CHECK(cudaFree(parent_data_d));
-                        CHECK(cudaFree(active_in_d));
-                        CHECK(cudaFree(active_out_d));
+                        // for (int i = 0; i < vertices; i++) {
+                        //     if (parent_data[i] != -1) {
+                        //         printf("parent_data[%d]=%d\n", i, parent_data[i]);
+                        //     }
+                        // }
+                        // CHECK(cudaFree(parent_data_d));
+                        // free(parent_data_h);
+                        // CHECK(cudaFree(active_in_d));
+                        // CHECK(cudaFree(active_out_d));
 
 						// printf("local_value=%d\n\n", local_value);
 					    // process_test<T><<<GS, BS>>>(parent_data_d, end_vid-begin_vid);

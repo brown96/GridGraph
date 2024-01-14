@@ -22,6 +22,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define BS 1024
 #define GS (N+BS-1)/BS
 #define GPU_SIZE 8l*1024l*1024l*1024l*2l
+#define PARTITION_SIZE 1
 
 #include <unistd.h>
 
@@ -80,6 +81,8 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
     unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
     if (idx >= n) return;
+
+    if (src_d[idx] == -1 || dst_d[idx] == -1) return;
 
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])] & (1ull<<BIT_OFFSET(src_d[idx]))) {
         if (atomicCAS(parent_data_d + dst_d[idx] - dst_begin_vid, -1, src_d[idx]) == -1) {
@@ -330,6 +333,12 @@ class Graph {
         T *parent_data_d_mem;
         CHECK(cudaMalloc((void**)&parent_data_d_mem, sizeof(T)*vertices));
 
+        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
+        CHECK(cudaMemset(parent_data_d_mem, -1, sizeof(T)*vertices));
+        T *parent_data_d;
+        parent_data_d = parent_data_d_mem;
+        CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+
         int active_size = WORD_OFFSET(vertices-1) + 1;
 
         // active_inのデバイス側のメモリを事前に確保
@@ -342,11 +351,16 @@ class Graph {
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
-        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
-        CHECK(cudaMemset(parent_data_d_mem, -1, sizeof(T)*vertices));
-        T *parent_data_d;
-        parent_data_d = parent_data_d_mem;
-        CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+        // ソース頂点のデバイス側の領域を事前確保
+        int src_d;
+        CHECK(cudaMalloc((void**)&src_d, sizeof(int)*IOSIZE/edge_unit));
+        CHECK(cudaMemset(src_d, -1, sizeof(int)*IOSIZE/edge_unit));
+        
+        // デスティネーション頂点のデバイス側の領域を事前確保
+        int dst_d;
+        CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*IOSIZE/edge_unit));
+        CHECK(cudaMemset(dst_d, -1, sizeof(int)*IOSIZE/edge_unit));
+        
 
         long read_bytes = 0;
 
@@ -467,7 +481,7 @@ class Graph {
                     T local_value = zero;
                     long local_read_bytes = 0;
                     while (true) {
-                        int fin;
+                        int fin  = -1;
                         long offset, length;
                         std::tie(fin, offset, length) = tasks.pop();
                         if (fin == -1) break;
@@ -475,6 +489,7 @@ class Graph {
                         long bytes = pread(fin, buffer, length, offset);
                         assert(bytes > 0);
                         local_read_bytes += bytes;
+
                         int n = (bytes - (offset % edge_unit)) / edge_unit;
                         VertexId *src_h = (VertexId*)malloc(sizeof(VertexId)*n);
                         VertexId *dst_h = (VertexId*)malloc(sizeof(VertexId)*n);
@@ -504,7 +519,7 @@ class Graph {
                         // 必要な分割数を計算
                         long edge_size, parent_size, active_in_size, active_out_size, calc_size;
                         edge_size = sizeof(VertexId)*n*2;
-                        parent_size = sizeof(T)*(dst_end_vid - dst_begin_vid);
+                        parent_size = sizeof(T)*vertices;
                         active_in_size = sizeof(unsigned long long int)*active_size;
                         active_out_size = sizeof(unsigned long long int)*active_size;
                         calc_size = sizeof(T)*1;
@@ -515,20 +530,21 @@ class Graph {
                         int edges = remain_size / edge_unit;
 
                         // CPUでGPUにエッジの情報を渡し、カーネルを実行する処理
-                        for (int i = 0; i < n; i += edges) {
+                        // for (int i = 0; i < n; i += edges) {
                             CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
                             // 必要なエッジの領域確保数をedgesで初期化
                             int pass_size = edges;
                             if (i + edges >= n) pass_size = n - i; //edges分のエッジが後に無い場合、必要なエッジの領域確保数はn-i
 
                             // ソース頂点とデスティネーション頂点のデバイス領域確保
-                            int *src_d, *dst_d;
-                            CHECK(cudaMalloc((void**)&src_d, sizeof(int)*pass_size));
-                            CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*pass_size));
-                            CHECK(cudaMemcpy(src_d, src_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
-                            CHECK(cudaMemcpy(dst_d, dst_h+i, sizeof(int)*pass_size, cudaMemcpyHostToDevice));
+                            CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*n, cudaMemcpyHostToDevice));
+                            CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*n, cudaMemcpyHostToDevice));
                             process_e<T><<<GS, BS>>>(src_d, dst_d, active_in_d, active_out_d, parent_data_d, local_value_d, src_begin_vid, dst_begin_vid, n);
                             cudaDeviceSynchronize();
+                            
+                            // ソース頂点とデスティネーション頂点の領域を-1で初期化
+                            CHECK(cudaMemset(src_d, -1, sizeof(int)*IOSIZE/edge_unit));
+                            CHECK(cudaMemset(dst_d, -1, sizeof(int)*IOSIZE/edge_unit));
                             CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
                             // printf("local_value=%d\n", *local_value_h);
 						    local_value += *local_value_h;
@@ -536,7 +552,7 @@ class Graph {
                             // free(local_value_h);
                             // CHECK(cudaFree(src_d));
                             // CHECK(cudaFree(dst_d));
-                        }
+                        // }
                         // printf("dst_begin_vid=%d\n", dst_begin_vid);
                         CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
                         // for (int i = 0; i < vertices; i++) {

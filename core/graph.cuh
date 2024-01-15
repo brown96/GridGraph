@@ -515,6 +515,14 @@ public:
 						}
 					}
 
+					// bufferに格納されたエッジのソース頂点とデスティネーション頂点が含まれている各パーティションの開始頂点と終了頂点を計算
+					int src_partition_id = get_partition_id(vertices, partitions, src_h[0]);
+					VertexId src_begin_vid, src_end_vid;
+					std::tie(src_begin_vid, src_end_vid) = get_partition_range(vertices, partitions, src_partition_id);
+					int dst_partition_id = get_partition_id(vertices, partitions, dst_h[0]);
+					VertexId dst_begin_vid, dst_end_vid;
+					std::tie(dst_begin_vid, dst_end_vid) = get_partition_range(vertices, partitions, dst_partition_id);
+
 					assert(id == edges);
 
 					// デバイス領域のソース頂点配列とデスティネーション頂点配列にホストの領域からコピー

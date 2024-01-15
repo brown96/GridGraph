@@ -80,19 +80,8 @@ void process(VertexId *src_h, VertexId *dst_h, T *parent_data, unsigned long lon
 }
 
 template <typename T>
-__global__ void process_e(int src, int dst, T *parent_data_d, unsigned long long int *active_in_data_d, unsigned long long int *active_out_data_d, T *local_value_d) {
-    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-	if (idx >= 1) return;
-	// if (idx == 0) printf("カーネルが実行されました\n");
-	if (active_in_data_d==nullptr || active_in_data_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-		if (parent_data_d[dst]==-1) {
-			if (atomicCAS(&parent_data_d[dst], -1, src) == -1) {
-				atomicOr(active_out_data_d+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
-				*local_value_d += 1;
-			}
-		}
-	}
-	return;
+__global__ void process_e(int *src_h, int *dst_h, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
+
 }
 
 class Graph {
@@ -342,6 +331,7 @@ public:
         T *local_value_h = (T*)calloc(sizeof(T), 1);
         T *local_value_d;
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
+		CHECK(cudaMemset(local_value_d, -1, sizeof(T)*1));
 
 		// ソース頂点とデスティネーション頂点のホスト側領域確保
         VertexId *src_h = (VertexId*)malloc(sizeof(VertexId)*IOSIZE/edge_unit);
@@ -480,6 +470,8 @@ public:
 
 					int id = 0;
 					// CHECK: start position should be offset % edge_unit
+
+					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
 					for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
@@ -489,8 +481,9 @@ public:
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
-						// process_e<<<GS, BS>>>(src, dst, parent_data_d, active_in_d, active_out_d, local_value_d);
 					}
+					assert(id == edges);
+					// process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 					process(src_h, dst_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 				}
 				// CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));

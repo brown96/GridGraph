@@ -334,10 +334,15 @@ public:
 		CHECK(cudaMemset(local_value_d, -1, sizeof(T)*1));
 
 		// ソース頂点とデスティネーション頂点のホスト側領域確保
-        VertexId *src_h = (VertexId*)malloc(sizeof(VertexId)*IOSIZE/edge_unit);
-        VertexId *dst_h = (VertexId*)malloc(sizeof(VertexId)*IOSIZE/edge_unit);
-		memset(src_h, -1, sizeof(VertexId)*IOSIZE/edge_unit);
-		memset(dst_h, -1, sizeof(VertexId)*IOSIZE/edge_unit);
+        int *src_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
+        int *dst_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
+		memset(src_h, -1, sizeof(int)*IOSIZE/edge_unit);
+		memset(dst_h, -1, sizeof(int)*IOSIZE/edge_unit);
+
+		// ソース頂点とデスティネーション頂点のデバイス側領域確保(使用する前に0で初期化)
+		int *src_d, *dst_d;
+		CHECK(cudaMalloc((void**)&src_d, sizeof(int)*IOSIZE/edge_unit));
+		CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*IOSIZE/edge_unit));
 
 		// parentのホスト側の領域を確保
 		T *parent_data_h = (T *)malloc(sizeof(T)*vertices);
@@ -346,7 +351,7 @@ public:
 		// parentのデバイス側の領域を確保
 		T *parent_data_d;
 		CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*vertices));
-		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+		CHECK(cudaMemcpy(parent_data_d, parent_data_h, sizeof(T)*vertices, cudaMemcpyHostToDevice));
 
 		int active_size = WORD_OFFSET(vertices-1) + 1; // active_inとactive_outのサイズ
 
@@ -361,12 +366,12 @@ public:
 		// active_inのデバイス側の領域を確保
 		unsigned long long int *active_in_d;
         CHECK(cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*active_size));
-        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+        CHECK(cudaMemcpy(active_in_d, active_in_h, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// active_outのデバイス側の領域を確保
 		unsigned long long int *active_out_d;
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
-        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+        CHECK(cudaMemcpy(active_out_d, active_out_h, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		int fin;
 		long offset = 0;
@@ -494,7 +499,15 @@ public:
 							continue;
 						}
 					}
+
 					assert(id == edges);
+
+					// デバイス領域のソース頂点配列とデスティネーション頂点配列にホストの領域からコピー
+					CHECK(cudaMemset(src_d, -1, sizeof(int)*IOSIZE/edge_unit)); // 念のため-1で初期化
+					CHECK(cudaMemset(dst_d, -1, sizeof(int)*IOSIZE/edge_unit)); // 念のため-1で初期化
+					CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
+					CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
+
 					// process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 					process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}
@@ -504,6 +517,8 @@ public:
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
+			
+			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
 			// CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
 			// CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 

@@ -21,7 +21,6 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*1024)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define GPU_SIZE 8l*1024l*1024l*1024l*2l;
 
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
@@ -388,6 +387,16 @@ public:
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
         CHECK(cudaMemcpy(active_out_d, active_out_h, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
+		// GPUのメモリサイズと使用するメモリサイズを比較(基本的にGPUサイズを超えない)
+		long edge_size, parent_size, active_in_size, active_out_size, calc_size;
+		edge_size = sizeof(VertexId)*IOSIZE/edge_unit*2;
+		parent_size = sizeof(T)*vertices;
+		active_in_size = sizeof(unsigned long long int)*active_size;
+		active_out_size = sizeof(unsigned long long int)*active_size;
+		calc_size = sizeof(T)*1;
+		// printf("all_size=%ld\n", parent_size+active_in_size+active_out_size+edge_size+calc_size);
+		// printf("GPU_SIZE=%ld\n", 8l*1024l*1024l*1024l*2l);
+
 		int fin;
 		long offset = 0;
 		switch(update_mode) {
@@ -515,19 +524,9 @@ public:
 						}
 					}
 
-					// bufferに格納されたエッジのソース頂点とデスティネーション頂点が含まれている各パーティションの開始頂点と終了頂点を計算
-					int src_partition_id = get_partition_id(vertices, partitions, src_h[0]);
-					VertexId src_begin_vid, src_end_vid;
-					std::tie(src_begin_vid, src_end_vid) = get_partition_range(vertices, partitions, src_partition_id);
-					int dst_partition_id = get_partition_id(vertices, partitions, dst_h[0]);
-					VertexId dst_begin_vid, dst_end_vid;
-					std::tie(dst_begin_vid, dst_end_vid) = get_partition_range(vertices, partitions, dst_partition_id);
-
 					assert(id == edges);
 
 					// デバイス領域のソース頂点配列とデスティネーション頂点配列にホストの領域からコピー
-					CHECK(cudaMemset(src_d, -1, sizeof(int)*IOSIZE/edge_unit)); // 念のため-1で初期化
-					CHECK(cudaMemset(dst_d, -1, sizeof(int)*IOSIZE/edge_unit)); // 念のため-1で初期化
 					CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
 					CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
 

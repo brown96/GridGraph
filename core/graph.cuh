@@ -534,8 +534,8 @@ public:
 			}
 
 			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
-			CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
-			CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(parent_data_h, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(active_out_h, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 
 			break;
 		default:

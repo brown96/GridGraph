@@ -62,13 +62,14 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-void process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data, T *local_value_h) {
-	if (parent_data[dst]==-1) {
-		if (cas(&parent_data[dst], -1, src)) {
-			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
-			// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
-			*local_value_h += 1;
-			return;
+void process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_in_data, unsigned long long int * active_out_data, T *local_value_h) {
+	if (active_in_data==nullptr || active_in_data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+		if (parent_data[dst]==-1) {
+			if (cas(&parent_data[dst], -1, src)) {
+				__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
+				// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
+				*local_value_h += 1;
+			}
 		}
 	}
 	return;
@@ -439,9 +440,7 @@ public:
 							continue;
 						}
 						// if (dst > 75870) printf("count %d: src=%d, dst=%d\n", count, src, dst);
-						if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-							process(src, dst, parent_data, active_out->data, local_value_h);
-						}
+						process(src, dst, parent_data, bitmap->data, active_out->data, local_value_h);
 						count++;
 					}
 					// printf("count = %d\n", count);

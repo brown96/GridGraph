@@ -75,6 +75,22 @@ void process(VertexId src, VertexId dst, T *parent_data, unsigned long long int 
 	return;
 }
 
+template <typename T>
+__global__ void process_e(int src, int dst, T *parent_data_d, unsigned long long int *active_in_data_d, unsigned long long int *active_out_data_d, T *local_value_d) {
+    unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	if (idx >= 1) return;
+	// if (idx == 0) printf("カーネルが実行されました\n");
+	if (active_in_data_d==nullptr || active_in_data_d[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+		if (parent_data_d[dst]==-1) {
+			if (atomicCAS(&parent_data_d[dst], -1, src) == -1) {
+				atomicOr(active_out_data_d+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
+				*local_value_d += 1;
+			}
+		}
+	}
+	return;
+}
+
 class Graph {
 	int parallelism;
 	int edge_unit;
@@ -323,6 +339,29 @@ public:
         T *local_value_d;
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
 
+		// ソース頂点とデスティネーション頂点のホスト側領域確保
+        VertexId *src_h = (VertexId*)malloc(sizeof(VertexId)*IOSIZE/edge_unit);
+        VertexId *dst_h = (VertexId*)malloc(sizeof(VertexId)*IOSIZE/edge_unit);
+		memset(src_h, -1, sizeof(VertexId)*IOSIZE/edge_unit);
+		memset(dst_h, -1, sizeof(VertexId)*IOSIZE/edge_unit);
+
+		// parentのデバイス側の領域を確保
+		T *parent_data_d;
+		CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*vertices));
+		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+
+		int active_size = WORD_OFFSET(vertices-1) + 1; // active_inとactive_outのサイズ
+
+		// active_inのデバイス側の領域を確保
+		unsigned long long int *active_in_d;
+        CHECK(cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*active_size));
+        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+
+		// active_outのデバイス側の領域を確保
+		unsigned long long int *active_out_d;
+        CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
+        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+
 		int fin;
 		long offset = 0;
 		switch(update_mode) {
@@ -421,6 +460,7 @@ public:
 
                 tasks.push(std::make_tuple(-1, 0, 0));
 				T local_value = zero;
+				CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
 				long local_read_bytes = 0;
 				while (true) {
 					int fin = -1;
@@ -431,25 +471,34 @@ public:
 					long bytes = pread(fin, buffer, length, offset);
 					assert(bytes>0);
 					local_read_bytes += bytes;
-					int count = 0;
+
+					int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
+
+					int id = 0;
 					// CHECK: start position should be offset % edge_unit
 					for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+						src_h[id] = src;
+						dst_h[id] = dst;
+						id++;
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
-						// if (dst > 75870) printf("count %d: src=%d, dst=%d\n", count, src, dst);
-						process(src, dst, parent_data, bitmap->data, active_out->data, local_value_h);
-						count++;
+						// process_e<<<GS, BS>>>(src, dst, parent_data_d, active_in_d, active_out_d, local_value_d);
 					}
-					// printf("count = %d\n", count);
+					for (int i = 0; i < edges; i++) {
+						process(src_h[i], dst_h[i], parent_data, bitmap->data, active_out->data, local_value_h);
+					}
 				}
+				// CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 				local_value = *local_value_h;
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
+			// CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
+			// CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 
 			break;
 		default:

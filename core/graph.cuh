@@ -80,7 +80,7 @@ void process(VertexId *src_h, VertexId *dst_h, T *parent_data, unsigned long lon
 }
 
 template <typename T>
-__global__ void process_e(int *src_h, int *dst_h, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
+__global__ void process_e(int *src_d, int *dst_d, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
 
 }
 
@@ -339,12 +339,24 @@ public:
 		memset(src_h, -1, sizeof(VertexId)*IOSIZE/edge_unit);
 		memset(dst_h, -1, sizeof(VertexId)*IOSIZE/edge_unit);
 
+		// parentのホスト側の領域を確保
+		T *parent_data_h = (T *)malloc(sizeof(T)*vertices);
+		parent_data_h = parent_data;
+
 		// parentのデバイス側の領域を確保
 		T *parent_data_d;
 		CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*vertices));
 		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
 
 		int active_size = WORD_OFFSET(vertices-1) + 1; // active_inとactive_outのサイズ
+
+		// active_inのホスト側の領域を確保
+		unsigned long long int *active_in_h = (unsigned long long int *)malloc(sizeof(unsigned long long int)*active_size);
+		active_in_h = bitmap->data;
+
+		// active_outのホスト側の領域を確保
+		unsigned long long int *active_out_h = (unsigned long long int *)malloc(sizeof(unsigned long long int)*active_size);
+		active_out_h = active_out->data;
 
 		// active_inのデバイス側の領域を確保
 		unsigned long long int *active_in_d;
@@ -468,10 +480,10 @@ public:
 
 					int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
 
-					int id = 0;
 					// CHECK: start position should be offset % edge_unit
 
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
+					int id = 0;
 					for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
@@ -484,7 +496,7 @@ public:
 					}
 					assert(id == edges);
 					// process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					process(src_h, dst_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
+					process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}
 				// CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 				local_value = *local_value_h;

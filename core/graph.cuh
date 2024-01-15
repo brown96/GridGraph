@@ -488,7 +488,7 @@ public:
 						// process_e<<<GS, BS>>>(src, dst, parent_data_d, active_in_d, active_out_d, local_value_d);
 					}
 					for (int i = 0; i < edges; i++) {
-						process(src_h[i], dst_h[i], parent_data, bitmap->data, active_out->data, local_value_h);
+						if (src_h[i] != -1 && dst_h[i] != -1) process(src_h[i], dst_h[i], parent_data, bitmap->data, active_out->data, local_value_h);
 					}
 				}
 				// CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));

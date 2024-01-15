@@ -62,13 +62,17 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-void process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_in_data, unsigned long long int * active_out_data, T *local_value_h) {
-	if (active_in_data==nullptr || active_in_data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-		if (parent_data[dst]==-1) {
-			if (cas(&parent_data[dst], -1, src)) {
-				__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
-				// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
-				*local_value_h += 1;
+void process(VertexId *src_h, VertexId *dst_h, T *parent_data, unsigned long long int * active_in_data, unsigned long long int * active_out_data, T *local_value_h, int edges) {
+	for (int i = 0; i < edges; i++) {
+		if (src_h[i] != -1 && dst_h[i] != -1) {
+			if (active_in_data==nullptr || active_in_data[WORD_OFFSET(src_h[i])] & (1ul<<BIT_OFFSET(src_h[i]))) {
+				if (parent_data[dst_h[i]]==-1) {
+					if (cas(&parent_data[dst_h[i]], -1, src_h[i])) {
+						__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst_h[i]), 1ul<<BIT_OFFSET(dst_h[i]));
+						// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
+						*local_value_h += 1;
+					}
+				}
 			}
 		}
 	}
@@ -487,9 +491,7 @@ public:
 						}
 						// process_e<<<GS, BS>>>(src, dst, parent_data_d, active_in_d, active_out_d, local_value_d);
 					}
-					for (int i = 0; i < edges; i++) {
-						if (src_h[i] != -1 && dst_h[i] != -1) process(src_h[i], dst_h[i], parent_data, bitmap->data, active_out->data, local_value_h);
-					}
+					process(src_h, dst_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 				}
 				// CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 				local_value = *local_value_h;

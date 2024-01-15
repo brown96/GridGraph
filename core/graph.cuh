@@ -62,15 +62,16 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-int process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data, int count) {
+void process(VertexId src, VertexId dst, T *parent_data, unsigned long long int * active_out_data, T *local_value_h) {
 	if (parent_data[dst]==-1) {
 		if (cas(&parent_data[dst], -1, src)) {
 			__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst), 1ul<<BIT_OFFSET(dst));
 			// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
-			return 1;
+			*local_value_h += 1;
+			return;
 		}
 	}
-	return 0;
+	return;
 }
 
 class Graph {
@@ -316,64 +317,69 @@ public:
 			// printf("use buffered I/O\n");
 		}
 
+		// GPUで計算した値を集計するための領域を確保
+        T *local_value_h = (T*)calloc(sizeof(T), 1);
+        T *local_value_d;
+        CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
+
 		int fin;
 		long offset = 0;
 		switch(update_mode) {
 		case 0: // source oriented update
-			threads.clear();
-			for (int ti=0;ti<parallelism;ti++) {
-				threads.emplace_back([&](int thread_id){
-					T local_value = zero;
-					long local_read_bytes = 0;
-					while (true) {
-						int fin;
-						long offset, length;
-						std::tie(fin, offset, length) = tasks.pop();
-						if (fin==-1) break;
-						char * buffer = buffer_pool[thread_id];
-						long bytes = pread(fin, buffer, length, offset);
-						assert(bytes>0);
-						local_read_bytes += bytes;
-						// CHECK: start position should be offset % edge_unit
-						for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
-							VertexId & src = *(VertexId*)(buffer+pos);
-							VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-							if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-								local_value += process(src, dst, parent_data, active_out->data, 0);
-							}
-						}
-					}
-					write_add(&value, local_value);
-					write_add(&read_bytes, local_read_bytes);
-				}, ti);
-			}
-			fin = open((path+"/row").c_str(), read_mode);
-			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
-			for (int i=0;i<partitions;i++) {
-				if (!should_access_shard[i]) continue;
-				for (int j=0;j<partitions;j++) {
-					long begin_offset = row_offset[i*partitions+j];
-					if (begin_offset - offset >= PAGESIZE) {
-						offset = begin_offset / PAGESIZE * PAGESIZE;
-					}
-					long end_offset = row_offset[i*partitions+j+1];
-					if (end_offset <= offset) continue;
-					while (end_offset - offset >= IOSIZE) {
-						tasks.push(std::make_tuple(fin, offset, IOSIZE));
-						offset += IOSIZE;
-					}
-					if (end_offset > offset) {
-						tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
-						offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
-					}
-				}
-			}
-			for (int i=0;i<parallelism;i++) {
-				tasks.push(std::make_tuple(-1, 0, 0));
-			}
-			for (int i=0;i<parallelism;i++) {
-				threads[i].join();
-			}
+			// threads.clear();
+			// for (int ti=0;ti<parallelism;ti++) {
+			// 	threads.emplace_back([&](int thread_id){
+			// 		T local_value = zero;
+			// 		long local_read_bytes = 0;
+			// 		while (true) {
+			// 			int fin;
+			// 			long offset, length;
+			// 			std::tie(fin, offset, length) = tasks.pop();
+			// 			if (fin==-1) break;
+			// 			char * buffer = buffer_pool[thread_id];
+			// 			long bytes = pread(fin, buffer, length, offset);
+			// 			assert(bytes>0);
+			// 			local_read_bytes += bytes;
+			// 			// CHECK: start position should be offset % edge_unit
+			// 			for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
+			// 				VertexId & src = *(VertexId*)(buffer+pos);
+			// 				VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+			// 				if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+			// 					local_value += process(src, dst, parent_data, active_out->data, 0);
+			// 				}
+			// 			}
+			// 		}
+			// 		write_add(&value, local_value);
+			// 		write_add(&read_bytes, local_read_bytes);
+			// 	}, ti);
+			// }
+			// fin = open((path+"/row").c_str(), read_mode);
+			// //posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
+			// for (int i=0;i<partitions;i++) {
+			// 	if (!should_access_shard[i]) continue;
+			// 	for (int j=0;j<partitions;j++) {
+			// 		long begin_offset = row_offset[i*partitions+j];
+			// 		if (begin_offset - offset >= PAGESIZE) {
+			// 			offset = begin_offset / PAGESIZE * PAGESIZE;
+			// 		}
+			// 		long end_offset = row_offset[i*partitions+j+1];
+			// 		if (end_offset <= offset) continue;
+			// 		while (end_offset - offset >= IOSIZE) {
+			// 			tasks.push(std::make_tuple(fin, offset, IOSIZE));
+			// 			offset += IOSIZE;
+			// 		}
+			// 		if (end_offset > offset) {
+			// 			tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
+			// 			offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
+			// 		}
+			// 	}
+			// }
+			// for (int i=0;i<parallelism;i++) {
+			// 	tasks.push(std::make_tuple(-1, 0, 0));
+			// }
+			// for (int i=0;i<parallelism;i++) {
+			// 	threads[i].join();
+			// }
 			break;
 		case 1: // target oriented update
 			fin = open((path+"/column").c_str(), read_mode);
@@ -434,12 +440,13 @@ public:
 						}
 						// if (dst > 75870) printf("count %d: src=%d, dst=%d\n", count, src, dst);
 						if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
-							local_value += process(src, dst, parent_data, active_out->data, count);
+							process(src, dst, parent_data, active_out->data, local_value_h);
 						}
 						count++;
 					}
 					// printf("count = %d\n", count);
 				}
+				local_value = *local_value_h;
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));

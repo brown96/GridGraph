@@ -81,6 +81,8 @@ __global__ void process_e(int *src_d, int *dst_d, unsigned long long int *active
 
     if (idx >= n) return;
 
+    if (src_d[idx] == -1 || dst_d[idx] == -1) return;
+
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])] & (1ull<<BIT_OFFSET(src_d[idx]))) {
         if (atomicCAS(parent_data_d + dst_d[idx] - dst_begin_vid, -1, src_d[idx]) == -1) {
 		    atomicOr(active_out_d+WORD_OFFSET(dst_d[idx]), 1ull<<BIT_OFFSET(dst_d[idx]));
@@ -330,6 +332,12 @@ class Graph {
         T *parent_data_d_mem;
         CHECK(cudaMalloc((void**)&parent_data_d_mem, sizeof(T)*vertices));
 
+        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
+        CHECK(cudaMemset(parent_data_d_mem, -1, sizeof(T)*vertices));
+        T *parent_data_d;
+        parent_data_d = parent_data_d_mem;
+        CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+
         int active_size = WORD_OFFSET(vertices-1) + 1;
 
         // active_inのデバイス側のメモリを事前に確保
@@ -341,12 +349,6 @@ class Graph {
         unsigned long long int *active_out_d;
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
-
-        // parentの領域をデバイス側に確保(parentはデスティネーション頂点のインデックスによってのみアクセス)
-        CHECK(cudaMemset(parent_data_d_mem, -1, sizeof(T)*vertices));
-        T *parent_data_d;
-        parent_data_d = parent_data_d_mem;
-        CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
 
         long read_bytes = 0;
 

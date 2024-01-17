@@ -472,6 +472,7 @@ public:
 				// printf("pre %d %d\n", begin_vid, end_vid);
 
                 offset = 0;
+				int count = 0;
 				for (int j=0;j<partitions;j++) {
 					for (int i=cur_partition;i<cur_partition+partition_batch;i++) {
 						if (i>=partitions) break;
@@ -484,19 +485,27 @@ public:
 						if (end_offset <= offset) continue;
 						while (end_offset - offset >= IOSIZE) {
 							tasks.push(std::make_tuple(fin, offset, IOSIZE));
+							count++;
 							offset += IOSIZE;
 						}
 						if (end_offset > offset) {
 							tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
+							count++;
 							offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
 						}
 					}
+				}
+				// printf("count=%d\n", count);
+				cudaStream_t streams[count];
+				for (int i = 0; i < count; i++) {
+					CHECK(cudaStreamCreate(&streams[i]));
 				}
 
                 tasks.push(std::make_tuple(-1, 0, 0));
 				T local_value = zero;
 				CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
 				long local_read_bytes = 0;
+				int count_while = 0;
 				while (true) {
 					int fin = -1;
 					long offset, length;
@@ -527,17 +536,22 @@ public:
 					assert(id == edges);
 
 					// デバイス領域のソース頂点配列とデスティネーション頂点配列にホストの領域からコピー
-					CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
-					CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
+					CHECK(cudaMemcpyAsync(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
+					CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
 
-					process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					printf("渡されたエッジ数：%d\n", edges);
 					// process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
+				}
+				for (int i = 0; i < count; i++) {
+					CHECK(cudaStreamDestroy(streams[i]));
 				}
 				CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 				local_value = *local_value_h;
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
+				count_while++;
 			}
 
 			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー

@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*1024)
+#define N ((long)1024*1024*4)
 #define BS 1024
 #define GS (N+BS-1)/BS
 

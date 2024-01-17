@@ -68,7 +68,6 @@ void process(VertexId *src_h, VertexId *dst_h, T *parent_data, unsigned long lon
 				if (parent_data[dst_h[i]]==-1) {
 					if (cas(&parent_data[dst_h[i]], -1, src_h[i])) {
 						__sync_fetch_and_or(active_out_data+WORD_OFFSET(dst_h[i]), 1ul<<BIT_OFFSET(dst_h[i]));
-						// if (count > 150000) printf("count %d: src=%d, dst=%d\n", count, src, dst);
 						*local_value_h += 1;
 					}
 				}
@@ -347,17 +346,6 @@ public:
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
 		CHECK(cudaMemset(local_value_d, -1, sizeof(T)*1));
 
-		// ソース頂点とデスティネーション頂点のホスト側領域確保
-        int *src_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
-        int *dst_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
-		memset(src_h, -1, sizeof(int)*IOSIZE/edge_unit);
-		memset(dst_h, -1, sizeof(int)*IOSIZE/edge_unit);
-
-		// ソース頂点とデスティネーション頂点のデバイス側領域確保(使用する前に0で初期化)
-		int *src_d, *dst_d;
-		CHECK(cudaMalloc((void**)&src_d, sizeof(int)*IOSIZE/edge_unit));
-		CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*IOSIZE/edge_unit));
-
 		// parentのホスト側の領域を確保
 		T *parent_data_h = (T *)malloc(sizeof(T)*vertices);
 		parent_data_h = parent_data;
@@ -496,6 +484,18 @@ public:
 					}
 				}
 				// printf("count=%d\n", count);
+
+				// ソース頂点とデスティネーション頂点のホスト側領域確保
+				int *src_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
+				int *dst_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
+				memset(src_h, -1, sizeof(int)*IOSIZE/edge_unit);
+				memset(dst_h, -1, sizeof(int)*IOSIZE/edge_unit);
+		
+				// ソース頂点とデスティネーション頂点のデバイス側領域確保(使用する前に0で初期化)
+				int *src_d, *dst_d;
+				CHECK(cudaMalloc((void**)&src_d, sizeof(int)*IOSIZE/edge_unit));
+				CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*IOSIZE/edge_unit));
+				
 				cudaStream_t streams[count];
 				for (int i = 0; i < count; i++) {
 					CHECK(cudaStreamCreate(&streams[i]));
@@ -540,7 +540,7 @@ public:
 					CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
 
 					process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					printf("渡されたエッジ数：%d\n", edges);
+					// printf("渡されたエッジ数：%d\n", edges);
 					// process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}
 				for (int i = 0; i < count; i++) {

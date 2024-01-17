@@ -502,9 +502,14 @@ public:
 				}
 
                 tasks.push(std::make_tuple(-1, 0, 0));
+
 				T local_value = zero;
 				CHECK(cudaMemset(local_value_d, 0, sizeof(T)*1));
 				long local_read_bytes = 0;
+				
+				// printf("remain_size=%ld\n", 2l*1024l*1024l*1024l - sizeof(T)*vertices - sizeof(unsigned long long int)*active_size*2 - sizeof(T) - sizeof(int)*IOSIZE/edge_unit*2);
+				// printf("edge_size=%ld\n", sizeof(int)*IOSIZE/edge_unit*2);
+
 				int count_while = 0;
 				while (true) {
 					int fin = -1;
@@ -540,7 +545,7 @@ public:
 					CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
 
 					process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					// printf("渡されたエッジ数：%d\n", edges);
+					// printf("edges=%d\n", edges);
 					// process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}
 				for (int i = 0; i < count; i++) {

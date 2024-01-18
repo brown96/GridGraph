@@ -78,7 +78,7 @@ void process(VertexId *edge_h, T *parent_data, unsigned long long int * active_i
 }
 
 template <typename T>
-__global__ void process_e(int *src_d, int *dst_d, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges, int *edge_d){
+__global__ void process_e(int *edge_d, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
 	unsigned int tid = threadIdx.x;
 	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -485,17 +485,6 @@ public:
 				}
 				// printf("count=%d\n", count);
 
-				// ソース頂点とデスティネーション頂点のホスト側領域確保
-				int *src_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
-				int *dst_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit);
-				memset(src_h, -1, sizeof(int)*IOSIZE/edge_unit);
-				memset(dst_h, -1, sizeof(int)*IOSIZE/edge_unit);
-		
-				// ソース頂点とデスティネーション頂点のデバイス側領域確保(使用する前に0で初期化)
-				int *src_d, *dst_d;
-				CHECK(cudaMalloc((void**)&src_d, sizeof(int)*IOSIZE/edge_unit));
-				CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*IOSIZE/edge_unit));
-
 				// エッジのホスト側領域確保
 				int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
 				memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
@@ -538,8 +527,6 @@ public:
 					for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-						src_h[id] = src;
-						dst_h[id] = dst;
 						edge_h[id*2] = src;
 						edge_h[id*2+1] = dst;
 						id++;
@@ -550,16 +537,11 @@ public:
 
 					assert(id == edges);
 
-					// デバイス領域のソース頂点配列とデスティネーション頂点配列にホストの領域からコピー
-					// CHECK(cudaMemcpyAsync(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
-					CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
-					// CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
-					CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
-
+					// エッジのデバイス領域にホスト領域からコピー
 					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*IOSIZE/edge_unit*2, cudaMemcpyHostToDevice));
 
 					// process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges, edge_d);
+					process_e<<<GS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 					// printf("edges=%d\n", edges);
 					// process(edge_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}

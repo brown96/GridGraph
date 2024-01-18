@@ -19,7 +19,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define GRAPH_H
 
 #define N ((long)1024*1024*4)
-#define BS 1024
+#define BS 256
 #define GS (N+BS-1)/BS
 
 #define WORD_OFFSET(i) (i >> 6)
@@ -496,10 +496,10 @@ public:
 				CHECK(cudaMalloc((void**)&src_d, sizeof(int)*IOSIZE/edge_unit));
 				CHECK(cudaMalloc((void**)&dst_d, sizeof(int)*IOSIZE/edge_unit));
 				
-				cudaStream_t streams[count];
-				for (int i = 0; i < count; i++) {
-					CHECK(cudaStreamCreate(&streams[i]));
-				}
+				// cudaStream_t streams[count];
+				// for (int i = 0; i < count; i++) {
+				// 	CHECK(cudaStreamCreate(&streams[i]));
+				// }
 
                 tasks.push(std::make_tuple(-1, 0, 0));
 
@@ -541,16 +541,19 @@ public:
 					assert(id == edges);
 
 					// デバイス領域のソース頂点配列とデスティネーション頂点配列にホストの領域からコピー
-					CHECK(cudaMemcpyAsync(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
-					CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
+					// CHECK(cudaMemcpyAsync(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
+					CHECK(cudaMemcpy(src_d, src_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
+					// CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
+					CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
 
-					process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					// process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 					// printf("edges=%d\n", edges);
 					// process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}
-				for (int i = 0; i < count; i++) {
-					CHECK(cudaStreamDestroy(streams[i]));
-				}
+				// for (int i = 0; i < count; i++) {
+				// 	CHECK(cudaStreamDestroy(streams[i]));
+				// }
 				CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 				local_value = *local_value_h;
 				write_add(&value, local_value);

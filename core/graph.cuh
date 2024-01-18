@@ -61,7 +61,7 @@ void f_none_2(std::pair<VertexId,VertexId> source_vid_range, std::pair<VertexId,
 }
 
 template <typename T>
-void process(VertexId *src_h, VertexId *dst_h, T *parent_data, unsigned long long int * active_in_data, unsigned long long int * active_out_data, T *local_value_h, int edges, int *edge_h) {
+void process(VertexId *edge_h, T *parent_data, unsigned long long int * active_in_data, unsigned long long int * active_out_data, T *local_value_h, int edges) {
 	for (int i = 0; i < edges; i++) {
 		if (edge_h[i*2] != -1 && edge_h[i*2+1] != -1) {
 			if (active_in_data==nullptr || active_in_data[WORD_OFFSET(edge_h[i*2])] & (1ul<<BIT_OFFSET(edge_h[i*2]))) {
@@ -78,18 +78,18 @@ void process(VertexId *src_h, VertexId *dst_h, T *parent_data, unsigned long lon
 }
 
 template <typename T>
-__global__ void process_e(int *src_d, int *dst_d, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
+__global__ void process_e(int *src_d, int *dst_d, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges, int *edge_d){
 	unsigned int tid = threadIdx.x;
 	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
 	if (idx >= edges) return;
 
-	if (src_d[idx] == -1 || dst_d[idx] == -1) return;
+	if (edge_d[idx*2] == -1 || edge_d[idx*2+1] == -1) return;
 
-	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(src_d[idx])] & (1ul<<BIT_OFFSET(src_d[idx]))) {
-		if (parent_data_d[dst_d[idx]]==-1) {
-			if (atomicCAS(parent_data_d+dst_d[idx], -1, src_d[idx]) == -1) {
-				atomicOr(active_out_d+WORD_OFFSET(dst_d[idx]), 1ul<<BIT_OFFSET(dst_d[idx]));
+	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(edge_d[idx*2])] & (1ul<<BIT_OFFSET(edge_d[idx*2]))) {
+		if (parent_data_d[edge_d[idx*2+1]]==-1) {
+			if (atomicCAS(parent_data_d+edge_d[idx*2+1], -1, edge_d[idx*2]) == -1) {
+				atomicOr(active_out_d+WORD_OFFSET(edge_d[idx*2+1]), 1ul<<BIT_OFFSET(edge_d[idx*2+1]));
 				atomicAdd(local_value_d, 1);
 			}
 		}
@@ -499,6 +499,10 @@ public:
 				// エッジのホスト側領域確保
 				int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
 				memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
+
+				// エッジのデバイス側領域確保
+				int *edge_d;
+				CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*IOSIZE/edge_unit*2));
 				
 				// cudaStream_t streams[count];
 				// for (int i = 0; i < count; i++) {
@@ -552,15 +556,17 @@ public:
 					// CHECK(cudaMemcpyAsync(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice, streams[count_while]));
 					CHECK(cudaMemcpy(dst_d, dst_h, sizeof(int)*IOSIZE/edge_unit, cudaMemcpyHostToDevice));
 
+					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*IOSIZE/edge_unit*2, cudaMemcpyHostToDevice));
+
 					// process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					// process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					process_e<<<GS, BS>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges, edge_d);
 					// printf("edges=%d\n", edges);
-					process(src_h, dst_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges, edge_h);
+					// process(edge_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 				}
 				// for (int i = 0; i < count; i++) {
 				// 	CHECK(cudaStreamDestroy(streams[i]));
 				// }
-				// CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
+				CHECK(cudaMemcpy(local_value_h, local_value_d, sizeof(T)*1, cudaMemcpyDeviceToHost));
 				local_value = *local_value_h;
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
@@ -569,8 +575,8 @@ public:
 			}
 
 			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
-			// CHECK(cudaMemcpy(parent_data_h, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
-			// CHECK(cudaMemcpy(active_out_h, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(parent_data_h, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(active_out_h, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 
 			break;
 		default:

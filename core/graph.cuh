@@ -544,6 +544,7 @@ public:
 					process_e<<<GS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 					// printf("edges=%d\n", edges);
 					// process(edge_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
+					count_while++;
 				}
 				// for (int i = 0; i < count; i++) {
 				// 	CHECK(cudaStreamDestroy(streams[i]));
@@ -553,7 +554,6 @@ public:
 				write_add(&value, local_value);
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
-				count_while++;
 			}
 
 			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー

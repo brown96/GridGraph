@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*1024)
+#define N ((long)1024*1024*512)
 #define BS 256
 #define GS (N+BS-1)/BS
 
@@ -473,7 +473,7 @@ public:
 						}
 					}
 				}
-				// printf("count=%d\n", count);
+				printf("count=%d\n", count);
 				
 				// cudaStream_t streams[count];
 				// for (int i = 0; i < count; i++) {
@@ -525,14 +525,14 @@ public:
 					cudaEventRecord(time1, 0);
 
 					// エッジのデバイス領域にホスト領域からコピー
-					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*IOSIZE/edge_unit*2, cudaMemcpyHostToDevice));
+					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*edges*2, cudaMemcpyHostToDevice));
 
 					cudaEventRecord(time2, 0);
 
 					cudaEventSynchronize(time2);
 
 					// process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					process_e<<<GS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					process_e<<<(edges+BS-1)/BS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 
 					cudaEventRecord(time3, 0);
 
@@ -547,9 +547,9 @@ public:
 					cudaEventDestroy(time2);
 					cudaEventDestroy(time3);
 
-					// printf("time12: %.2fms\n", time12);
-					// printf("time23: %.2fms\n\n", time23);
-					// printf("edges=%d\n", edges);
+					printf("time12: %.2fms\n", time12);
+					printf("time23: %.2fms\n", time23);
+					printf("edges=%d\n", edges);
 					// process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 					count_while++;
 				}

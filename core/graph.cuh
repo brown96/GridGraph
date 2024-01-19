@@ -564,7 +564,7 @@ public:
 					// printf("time12: %.2fms\n", time12);
 					// printf("time23: %.2fms\n\n", time23);
 					// printf("edges=%d\n", edges);
-					// process(edge_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
+					// process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 					count_while++;
 				}
 				// for (int i = 0; i < count; i++) {

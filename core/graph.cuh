@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*4)
+#define N ((long)1024*1024*8)
 #define BS 256
 #define GS (N+BS-1)/BS
 
@@ -84,7 +84,7 @@ __global__ void process_e(int *edge_d, T *parent_data_d, unsigned long long int 
 
 	if (idx >= edges) return;
 
-	if (edge_d[idx*2] == -1 || edge_d[idx*2+1] == -1) return;
+	// if (edge_d[idx*2] == -1 || edge_d[idx*2+1] == -1) return;
 
 	if (active_in_d==nullptr || active_in_d[WORD_OFFSET(edge_d[idx*2])] & (1ul<<BIT_OFFSET(edge_d[idx*2]))) {
 		if (parent_data_d[edge_d[idx*2+1]]==-1) {
@@ -375,6 +375,14 @@ public:
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
         CHECK(cudaMemcpy(active_out_d, active_out_h, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
+		// エッジのホスト側領域確保
+		int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
+		memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
+
+		// エッジのデバイス側領域確保
+		int *edge_d;
+		CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*IOSIZE/edge_unit*2));
+
 		// GPUのメモリサイズと使用するメモリサイズを比較(基本的にGPUサイズを超えない)
 		long edge_size, parent_size, active_in_size, active_out_size, calc_size;
 		edge_size = sizeof(VertexId)*IOSIZE/edge_unit*2;
@@ -484,14 +492,6 @@ public:
 					}
 				}
 				// printf("count=%d\n", count);
-
-				// エッジのホスト側領域確保
-				int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
-				memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
-
-				// エッジのデバイス側領域確保
-				int *edge_d;
-				CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*IOSIZE/edge_unit*2));
 				
 				// cudaStream_t streams[count];
 				// for (int i = 0; i < count; i++) {
@@ -537,11 +537,38 @@ public:
 
 					assert(id == edges);
 
+					cudaEvent_t time1, time2, time3;
+					cudaEventCreate(&time1);
+					cudaEventCreate(&time2);
+					cudaEventCreate(&time3);
+
+					cudaEventRecord(time1, 0);
+
 					// エッジのデバイス領域にホスト領域からコピー
 					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*IOSIZE/edge_unit*2, cudaMemcpyHostToDevice));
 
+					cudaEventRecord(time2, 0);
+
+					cudaEventSynchronize(time2);
+
 					// process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
 					process_e<<<GS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+
+					cudaEventRecord(time3, 0);
+
+					cudaEventSynchronize(time3);
+
+					float time12;
+					cudaEventElapsedTime(&time12, time1, time2);
+					float time23;
+					cudaEventElapsedTime(&time23, time2, time3);
+
+					cudaEventDestroy(time1);
+					cudaEventDestroy(time2);
+					cudaEventDestroy(time3);
+
+					// printf("time12: %.2fms\n", time12);
+					// printf("time23: %.2fms\n\n", time23);
 					// printf("edges=%d\n", edges);
 					// process(edge_h, parent_data_h, active_in_h, active_out_h, local_value_h, edges);
 					count_while++;
@@ -564,6 +591,13 @@ public:
 		default:
 			assert(false);
 		}
+		free(local_value_h);
+		CHECK(cudaFree(local_value_d));
+		CHECK(cudaFree(parent_data_d));
+		CHECK(cudaFree(active_in_d));
+		CHECK(cudaFree(active_out_d));
+		free(edge_h);
+		CHECK(cudaFree(edge_d));
 
 		close(fin);
 		// printf("streamed %ld bytes of edges\n", read_bytes);

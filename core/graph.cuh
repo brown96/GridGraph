@@ -519,21 +519,17 @@ public:
 					// CHECK: start position should be offset % edge_unit
 
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
-					int id = 0;
 					long pos = offset % edge_unit;
 					for (int i = 0; i < edges; i++) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-						edge_h[id*2] = src;
-						edge_h[id*2+1] = dst;
-						id++;
+						edge_h[i*2] = src;
+						edge_h[i*2+1] = dst;
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
 						pos += edge_unit;
 					}
-
-					assert(id == edges);
 
 					cudaEvent_t time1, time2, time3;
 					cudaEventCreate(&time1);

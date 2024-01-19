@@ -520,7 +520,8 @@ public:
 
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
 					int id = 0;
-					for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
+					long pos = offset % edge_unit;
+					for (int i = 0; i < edges; i++) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
 						edge_h[id*2] = src;
@@ -529,6 +530,7 @@ public:
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
+						pos += edge_unit;
 					}
 
 					assert(id == edges);

@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*512)
+#define N ((long)1024*1024*1024)
 #define BS 256
 #define GS (N+BS-1)/BS
 
@@ -473,7 +473,7 @@ public:
 						}
 					}
 				}
-				printf("count=%d\n", count);
+				// printf("count=%d\n", count);
 				
 				// cudaStream_t streams[count];
 				// for (int i = 0; i < count; i++) {
@@ -547,9 +547,9 @@ public:
 					cudaEventDestroy(time2);
 					cudaEventDestroy(time3);
 
-					printf("time12: %.2fms\n", time12);
-					printf("time23: %.2fms\n", time23);
-					printf("edges=%d\n", edges);
+					// printf("block %d:\nedges=%d\n", count_while, edges);
+					// printf("time12: %.2fms\n", time12);
+					// printf("time23: %.2fms\n\n", time23);
 					// process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 					count_while++;
 				}

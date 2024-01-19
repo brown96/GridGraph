@@ -346,34 +346,22 @@ public:
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
 		CHECK(cudaMemset(local_value_d, -1, sizeof(T)*1));
 
-		// parentのホスト側の領域を確保
-		T *parent_data_h = (T *)malloc(sizeof(T)*vertices);
-		parent_data_h = parent_data;
-
 		// parentのデバイス側の領域を確保
 		T *parent_data_d;
 		CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*vertices));
-		CHECK(cudaMemcpy(parent_data_d, parent_data_h, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
 
 		int active_size = WORD_OFFSET(vertices-1) + 1; // active_inとactive_outのサイズ
-
-		// active_inのホスト側の領域を確保
-		unsigned long long int *active_in_h = (unsigned long long int *)malloc(sizeof(unsigned long long int)*active_size);
-		active_in_h = bitmap->data;
-
-		// active_outのホスト側の領域を確保
-		unsigned long long int *active_out_h = (unsigned long long int *)malloc(sizeof(unsigned long long int)*active_size);
-		active_out_h = active_out->data;
 
 		// active_inのデバイス側の領域を確保
 		unsigned long long int *active_in_d;
         CHECK(cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*active_size));
-        CHECK(cudaMemcpy(active_in_d, active_in_h, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// active_outのデバイス側の領域を確保
 		unsigned long long int *active_out_d;
         CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
-        CHECK(cudaMemcpy(active_out_d, active_out_h, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
+        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// エッジのホスト側領域確保
 		int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
@@ -584,8 +572,8 @@ public:
 			}
 
 			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
-			CHECK(cudaMemcpy(parent_data_h, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
-			CHECK(cudaMemcpy(active_out_h, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 
 			break;
 		default:

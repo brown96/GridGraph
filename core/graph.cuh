@@ -371,23 +371,9 @@ public:
 		int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
 		memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
 
-		// 予備のエッジのホスト側領域確保
-		int *spare_edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
-		memset(spare_edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
-
 		// エッジのデバイス側領域確保
 		int *edge_d;
 		CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*IOSIZE/edge_unit*2));
-
-		// GPUのメモリサイズと使用するメモリサイズを比較(基本的にGPUサイズを超えない)
-		long edge_size, parent_size, active_in_size, active_out_size, calc_size;
-		edge_size = sizeof(VertexId)*IOSIZE/edge_unit*2;
-		parent_size = sizeof(T)*vertices;
-		active_in_size = sizeof(unsigned long long int)*active_size;
-		active_out_size = sizeof(unsigned long long int)*active_size;
-		calc_size = sizeof(T)*1;
-		// printf("all_size=%ld\n", parent_size+active_in_size+active_out_size+edge_size+calc_size);
-		// printf("GPU_SIZE=%ld\n", 8l*1024l*1024l*1024l*2l);
 
 		int fin;
 		long offset = 0;

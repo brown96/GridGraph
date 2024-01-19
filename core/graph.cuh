@@ -120,12 +120,12 @@ public:
 	Graph (std::string path) {
 		PAGESIZE = 4096;
 		parallelism = std::thread::hardware_concurrency();
-		buffer_pool = new char * [parallelism*1];
-		for (int i=0;i<parallelism*1;i++) {
-			buffer_pool[i] = (char *)memalign(PAGESIZE, IOSIZE);
-			assert(buffer_pool[i]!=NULL);
-			memset(buffer_pool[i], 0, IOSIZE);
-		}
+		// buffer_pool = new char * [parallelism*1];
+		// for (int i=0;i<parallelism*1;i++) {
+		// 	buffer_pool[i] = (char *)memalign(PAGESIZE, IOSIZE);
+		// 	assert(buffer_pool[i]!=NULL);
+		// 	memset(buffer_pool[i], 0, IOSIZE);
+		// }
 		init(path);
 	}
 
@@ -340,6 +340,10 @@ public:
 			// printf("use buffered I/O\n");
 		}
 
+		// bufferをmallocにより確保
+		char *buffer_mem = (char*)malloc(sizeof(char)*IOSIZE);
+		memset(buffer_mem, 0, IOSIZE);
+
 		// GPUで計算した値を集計するための領域を確保
         T *local_value_h = (T*)calloc(sizeof(T), 1);
         T *local_value_d;
@@ -366,6 +370,10 @@ public:
 		// エッジのホスト側領域確保
 		int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
 		memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
+
+		// 予備のエッジのホスト側領域確保
+		int *spare_edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
+		memset(spare_edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
 
 		// エッジのデバイス側領域確保
 		int *edge_d;
@@ -501,7 +509,7 @@ public:
 					long offset, length;
 					std::tie(fin, offset, length) = tasks.pop();
 					if (fin==-1) break;
-					char * buffer = buffer_pool[0];
+					char * buffer = buffer_mem;
 					long bytes = pread(fin, buffer, length, offset);
 					assert(bytes>0);
 					local_read_bytes += bytes;
@@ -579,6 +587,7 @@ public:
 		default:
 			assert(false);
 		}
+		free(buffer_mem);
 		free(local_value_h);
 		CHECK(cudaFree(local_value_d));
 		CHECK(cudaFree(parent_data_d));

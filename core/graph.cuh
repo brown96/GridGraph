@@ -504,11 +504,6 @@ public:
 
 					int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
 
-					cudaEvent_t time1, time2, time3;
-					cudaEventCreate(&time1);
-					cudaEventCreate(&time2);
-					cudaEventCreate(&time3);
-
 					if (local_edges + edges > MAX_EDGES) {
 						cudaEvent_t time1, time2, time3;
 						cudaEventCreate(&time1);

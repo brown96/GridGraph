@@ -18,9 +18,10 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define N ((long)1024*1024*1024)
+#define N ((long)1024*1024*512)
 #define BS 256
 #define GS (N+BS-1)/BS
+#define MAX_EDGES IOSIZE/4
 
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
@@ -368,12 +369,12 @@ public:
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// エッジのホスト側領域確保
-		int *edge_h = (int*)malloc(sizeof(int)*IOSIZE/edge_unit*2);
-		memset(edge_h, -1, sizeof(int)*IOSIZE/edge_unit*2);
+		int *edge_h = (int*)malloc(sizeof(int)*MAX_EDGES*2);
+		memset(edge_h, -1, sizeof(int)*MAX_EDGES*2);
 
 		// エッジのデバイス側領域確保
 		int *edge_d;
-		CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*IOSIZE/edge_unit*2));
+		CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*MAX_EDGES*2));
 
 		int fin;
 		long offset = 0;
@@ -490,6 +491,7 @@ public:
 				// printf("edge_size=%ld\n", sizeof(int)*IOSIZE/edge_unit*2);
 
 				int count_while = 0;
+				int local_edges = 0;
 				while (true) {
 					int fin = -1;
 					long offset, length;
@@ -502,6 +504,46 @@ public:
 
 					int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
 
+					cudaEvent_t time1, time2, time3;
+					cudaEventCreate(&time1);
+					cudaEventCreate(&time2);
+					cudaEventCreate(&time3);
+
+					if (local_edges + edges > MAX_EDGES) {
+						cudaEvent_t time1, time2, time3;
+						cudaEventCreate(&time1);
+						cudaEventCreate(&time2);
+						cudaEventCreate(&time3);
+						
+						cudaEventRecord(time1, 0);
+
+						CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
+
+						cudaEventRecord(time2, 0);
+						cudaEventSynchronize(time2);
+
+						process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, local_edges);
+
+						cudaEventRecord(time3, 0);
+						cudaEventSynchronize(time3);
+
+						float time12;
+						cudaEventElapsedTime(&time12, time1, time2);
+
+						float time23;
+						cudaEventElapsedTime(&time23, time2, time3);
+
+						cudaEventDestroy(time1);
+						cudaEventDestroy(time2);
+						cudaEventDestroy(time3);
+
+						printf("block %d:\nedges=%d\n", count_while, local_edges);
+						printf("time12: %.2fms\n", time12);
+						printf("time23: %.2fms\n\n", time23);
+						local_edges = 0;
+						count_while++;
+					}
+
 					// CHECK: start position should be offset % edge_unit
 
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
@@ -509,37 +551,39 @@ public:
 					for (int i = 0; i < edges; i++) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-						edge_h[i*2] = src;
-						edge_h[i*2+1] = dst;
+						edge_h[(local_edges + i)*2] = src;
+						edge_h[(local_edges + i)*2+1] = dst;
+						pos += edge_unit;
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
-						pos += edge_unit;
 					}
+					
+					local_edges += edges;
+					// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
+				}
 
+				if (local_edges != 0) {
 					cudaEvent_t time1, time2, time3;
 					cudaEventCreate(&time1);
 					cudaEventCreate(&time2);
 					cudaEventCreate(&time3);
-
+					
 					cudaEventRecord(time1, 0);
 
-					// エッジのデバイス領域にホスト領域からコピー
-					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*edges*2, cudaMemcpyHostToDevice));
+					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
 
 					cudaEventRecord(time2, 0);
-
 					cudaEventSynchronize(time2);
 
-					// process_e<<<GS, BS, 0, streams[count_while]>>>(src_d, dst_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
-					process_e<<<(edges+BS-1)/BS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, edges);
+					process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, local_edges);
 
 					cudaEventRecord(time3, 0);
-
 					cudaEventSynchronize(time3);
 
 					float time12;
 					cudaEventElapsedTime(&time12, time1, time2);
+
 					float time23;
 					cudaEventElapsedTime(&time23, time2, time3);
 
@@ -547,12 +591,11 @@ public:
 					cudaEventDestroy(time2);
 					cudaEventDestroy(time3);
 
-					// printf("block %d:\nedges=%d\n", count_while, edges);
-					// printf("time12: %.2fms\n", time12);
-					// printf("time23: %.2fms\n\n", time23);
-					// process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
-					count_while++;
+					printf("block %d:\nedges=%d\n", count_while, local_edges);
+					printf("time12: %.2fms\n", time12);
+					printf("time23: %.2fms\n\n", time23);
 				}
+
 				// for (int i = 0; i < count; i++) {
 				// 	CHECK(cudaStreamDestroy(streams[i]));
 				// }

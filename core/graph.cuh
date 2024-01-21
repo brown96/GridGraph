@@ -104,6 +104,7 @@ class Graph {
 	bool * should_access_shard;
 	long ** fsize;
 	char ** buffer_pool;
+	char * buffer_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -121,12 +122,9 @@ public:
 	Graph (std::string path) {
 		PAGESIZE = 4096;
 		parallelism = std::thread::hardware_concurrency();
-		// buffer_pool = new char * [parallelism*1];
-		// for (int i=0;i<parallelism*1;i++) {
-		// 	buffer_pool[i] = (char *)memalign(PAGESIZE, IOSIZE);
-		// 	assert(buffer_pool[i]!=NULL);
-		// 	memset(buffer_pool[i], 0, IOSIZE);
-		// }
+		// bufferをmallocにより確保
+		buffer_mem = (char*)malloc(sizeof(char)*IOSIZE);
+		memset(buffer_mem, 0, IOSIZE);
 		init(path);
 	}
 
@@ -340,10 +338,6 @@ public:
 			read_mode = O_RDONLY;
 			// printf("use buffered I/O\n");
 		}
-
-		// bufferをmallocにより確保
-		char *buffer_mem = (char*)malloc(sizeof(char)*IOSIZE);
-		memset(buffer_mem, 0, IOSIZE);
 
 		// GPUで計算した値を集計するための領域を確保
         T *local_value_h = (T*)calloc(sizeof(T), 1);
@@ -609,7 +603,6 @@ public:
 		default:
 			assert(false);
 		}
-		free(buffer_mem);
 		free(local_value_h);
 		CHECK(cudaFree(local_value_d));
 		CHECK(cudaFree(parent_data_d));

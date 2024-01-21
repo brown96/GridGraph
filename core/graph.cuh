@@ -19,9 +19,9 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define GRAPH_H
 
 #define N ((long)1024*1024*512)
-#define BS 256
+#define BS 1024
 #define GS (N+BS-1)/BS
-#define MAX_EDGES IOSIZE/4
+#define MAX_EDGES IOSIZE * 4
 
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
@@ -343,6 +343,8 @@ public:
 			// printf("use buffered I/O\n");
 		}
 
+		double start_time = get_time();
+
 		// GPUで計算した値を集計するための領域を確保
         T *local_value_h = (T*)calloc(sizeof(T), 1);
         T *local_value_d;
@@ -371,6 +373,10 @@ public:
 
 		// エッジのデバイス側領域確保
 		int *edge_d = edge_d_mem;
+
+		double end_time = get_time();
+
+		printf("memory time=%.2fms\n", (end_time - start_time)*1000);
 
 		int fin;
 		long offset = 0;

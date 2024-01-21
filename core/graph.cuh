@@ -103,11 +103,14 @@ class Graph {
 	int edge_unit;
 	bool * should_access_shard;
 	long ** fsize;
+	int active_size;
 	char ** buffer_pool;
 	char * buffer_mem;
 	int * edge_h_mem;
 	int * edge_d_mem;
 	int * parent_data_mem;
+	unsigned long long int * active_in_mem;
+	unsigned long long int * active_out_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -193,6 +196,11 @@ public:
 		if(c==-500) return;
 
 		CHECK(cudaMalloc((void**)&parent_data_mem, sizeof(int)*vertices));
+
+		active_size = WORD_OFFSET(vertices-1) + 1;
+
+		CHECK(cudaMalloc((void**)&active_in_mem, sizeof(unsigned long long int)*active_size));
+		CHECK(cudaMalloc((void**)&active_out_mem, sizeof(unsigned long long int)*active_size));
 	}
 
 	Bitmap * alloc_bitmap() {
@@ -357,16 +365,12 @@ public:
 		int *parent_data_d = parent_data_mem;
 		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(int)*vertices, cudaMemcpyHostToDevice));
 
-		int active_size = WORD_OFFSET(vertices-1) + 1; // active_inとactive_outのサイズ
-
 		// active_inのデバイス側の領域を確保
-		unsigned long long int *active_in_d;
-        CHECK(cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*active_size));
+		unsigned long long int *active_in_d = active_in_mem;
         CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// active_outのデバイス側の領域を確保
-		unsigned long long int *active_out_d;
-        CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*active_size));
+		unsigned long long int *active_out_d = active_out_mem;
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// エッジのホスト側領域確保
@@ -377,7 +381,7 @@ public:
 
 		double end_time = get_time();
 
-		printf("memory time=%.2fms\n", (end_time - start_time)*1000);
+		printf("memory time =%.2fms\n", (end_time - start_time)*1000);
 
 		int fin;
 		long offset = 0;
@@ -614,8 +618,6 @@ public:
 		}
 		free(local_value_h);
 		CHECK(cudaFree(local_value_d));
-		CHECK(cudaFree(active_in_d));
-		CHECK(cudaFree(active_out_d));
 
 		close(fin);
 		// printf("streamed %ld bytes of edges\n", read_bytes);

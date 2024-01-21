@@ -21,7 +21,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*512)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define MAX_EDGES IOSIZE * 4
+#define MAX_EDGES IOSIZE * 8
 
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
@@ -79,7 +79,7 @@ void process(VertexId *edge_h, T *parent_data, unsigned long long int * active_i
 }
 
 template <typename T>
-__global__ void process_e(int *edge_d, T *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
+__global__ void process_e(int *edge_d, int *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
 	unsigned int tid = threadIdx.x;
 	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
 
@@ -107,6 +107,7 @@ class Graph {
 	char * buffer_mem;
 	int * edge_h_mem;
 	int * edge_d_mem;
+	int * parent_data_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -190,6 +191,8 @@ public:
 		assert(bytes==static_cast<unsigned>(sizeof(long)*(partitions*partitions+1)));
 		close(fin_row_offset);
 		if(c==-500) return;
+
+		CHECK(cudaMalloc((void**)&parent_data_mem, sizeof(int)*vertices));
 	}
 
 	Bitmap * alloc_bitmap() {
@@ -349,12 +352,10 @@ public:
         T *local_value_h = (T*)calloc(sizeof(T), 1);
         T *local_value_d;
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
-		CHECK(cudaMemset(local_value_d, -1, sizeof(T)*1));
 
 		// parentのデバイス側の領域を確保
-		T *parent_data_d;
-		CHECK(cudaMalloc((void**)&parent_data_d, sizeof(T)*vertices));
-		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(T)*vertices, cudaMemcpyHostToDevice));
+		int *parent_data_d = parent_data_mem;
+		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(int)*vertices, cudaMemcpyHostToDevice));
 
 		int active_size = WORD_OFFSET(vertices-1) + 1; // active_inとactive_outのサイズ
 
@@ -604,7 +605,7 @@ public:
 			}
 
 			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
-			CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(T)*vertices, cudaMemcpyDeviceToHost));
+			CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(int)*vertices, cudaMemcpyDeviceToHost));
 			CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
 
 			break;
@@ -613,7 +614,6 @@ public:
 		}
 		free(local_value_h);
 		CHECK(cudaFree(local_value_d));
-		CHECK(cudaFree(parent_data_d));
 		CHECK(cudaFree(active_in_d));
 		CHECK(cudaFree(active_out_d));
 

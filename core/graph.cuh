@@ -105,6 +105,7 @@ class Graph {
 	long ** fsize;
 	char ** buffer_pool;
 	char * buffer_mem;
+	int * edge_h_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -125,6 +126,8 @@ public:
 		// bufferをmallocにより確保
 		buffer_mem = (char*)malloc(sizeof(char)*IOSIZE);
 		memset(buffer_mem, 0, IOSIZE);
+		edge_h_mem = (int*)malloc(sizeof(int)*MAX_EDGES*2);
+		memset(edge_h_mem, -1, MAX_EDGES*2);
 		init(path);
 	}
 
@@ -363,8 +366,7 @@ public:
         CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// エッジのホスト側領域確保
-		int *edge_h = (int*)malloc(sizeof(int)*MAX_EDGES*2);
-		memset(edge_h, -1, sizeof(int)*MAX_EDGES*2);
+		int *edge_h = edge_h_mem;
 
 		// エッジのデバイス側領域確保
 		int *edge_d;
@@ -608,7 +610,6 @@ public:
 		CHECK(cudaFree(parent_data_d));
 		CHECK(cudaFree(active_in_d));
 		CHECK(cudaFree(active_out_d));
-		free(edge_h);
 		CHECK(cudaFree(edge_d));
 
 		close(fin);

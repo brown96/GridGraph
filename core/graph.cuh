@@ -106,6 +106,7 @@ class Graph {
 	char ** buffer_pool;
 	char * buffer_mem;
 	int * edge_h_mem;
+	int * edge_d_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -123,11 +124,11 @@ public:
 	Graph (std::string path) {
 		PAGESIZE = 4096;
 		parallelism = std::thread::hardware_concurrency();
-		// bufferをmallocにより確保
 		buffer_mem = (char*)malloc(sizeof(char)*IOSIZE);
 		memset(buffer_mem, 0, IOSIZE);
 		edge_h_mem = (int*)malloc(sizeof(int)*MAX_EDGES*2);
 		memset(edge_h_mem, -1, MAX_EDGES*2);
+		CHECK(cudaMalloc((void**)&edge_d_mem, sizeof(int)*MAX_EDGES*2));
 		init(path);
 	}
 
@@ -369,8 +370,7 @@ public:
 		int *edge_h = edge_h_mem;
 
 		// エッジのデバイス側領域確保
-		int *edge_d;
-		CHECK(cudaMalloc((void**)&edge_d, sizeof(int)*MAX_EDGES*2));
+		int *edge_d = edge_d_mem;
 
 		int fin;
 		long offset = 0;
@@ -610,7 +610,6 @@ public:
 		CHECK(cudaFree(parent_data_d));
 		CHECK(cudaFree(active_in_d));
 		CHECK(cudaFree(active_out_d));
-		CHECK(cudaFree(edge_d));
 
 		close(fin);
 		// printf("streamed %ld bytes of edges\n", read_bytes);

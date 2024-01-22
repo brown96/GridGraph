@@ -46,7 +46,10 @@ int main(int argc, char ** argv) {
 		std::swap(active_in, active_out);
 		active_out->clear();
 		graph.hint(parent);
+		double start_time_e = get_time();
 		active_vertices = graph.stream_edges<VertexId>(parent.data, active_out, active_in);
+		double end_time_e = get_time();
+		printf("Total Stream: %.2fms\n\n", (end_time_e - start_time_e)*1000);
 	}
 	double end_time = get_time();
 

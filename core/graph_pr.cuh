@@ -34,6 +34,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include <omp.h>
 #endif
 #include <cstring>
+#include <cuda_runtime.h>
 
 #include <thread>
 #include <vector>
@@ -96,6 +97,38 @@ __global__ void process_e(int *edge_d, int *parent_data_d, unsigned long long in
 		}
 	}
 	return;
+}
+
+__device__ float logAdd(float log_a, float log_b) {
+	if (log_a > log_b) {
+		return log_a + log1pf(expf(log_b - log_a));
+	}
+	else {
+		return log_b + log1pf(expf(log_a - log_b));
+	}
+}
+
+__device__ void atomicLogAdd(float *address, float val) {
+	int i_val = __float_as_int(val);
+	int tmp0 = 0;
+	int tmp1;
+
+	while ((tmp1 = atomicCAS((int *)address, tmp0, i_val)) != tmp0) {
+		tmp0 = tmp1;
+		i_val = __float_as_int(logAdd(val, int_as_float(tmp1)));
+	}
+}
+
+template <typename T>
+__global__ void accum(int *degree_d, float *pagerank_d, float *new_pagerank_d) {
+	
+}
+
+__global__ void testLogAdd(float *test) {
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+	// printf("idx=%d\n", idx);
+	if (idx >= 1023) return;
+	atomicLogAdd(&test[idx%2], log1pf(idx));
 }
 
 class Graph {

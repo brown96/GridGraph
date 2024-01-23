@@ -15,6 +15,7 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
 */
 
 #include "../core/graph_bfs.cuh"
+#include "../core/common.h"
 
 int main(int argc, char ** argv) {
 	if (argc<3) {
@@ -37,6 +38,10 @@ int main(int argc, char ** argv) {
 	parent.fill(-1);
 	parent[start_vid] = start_vid;
 	VertexId active_vertices = 1;
+
+	VertexId *parent_data_d;
+	CHECK(cudaMalloc((void**)&parent_data_d, sizeof(VertexId)*graph.vertices));
+	CHECK(cudaMemcpy(parent_data_d, parent.data, sizeof(VertexId)*graph.vertices, cudaMemcpyHostToDevice));
 
 	double start_time = get_time();
 	int iteration = 0;

@@ -103,7 +103,6 @@ class Graph {
 	int edge_unit;
 	bool * should_access_shard;
 	long ** fsize;
-	int active_size;
 	char ** buffer_pool;
 	char * buffer_mem;
 	int * edge_h_mem;
@@ -124,6 +123,7 @@ public:
 	VertexId vertices;
 	EdgeId edges;
 	int partitions;
+	int active_size;
 
 	Graph (std::string path) {
 		PAGESIZE = 4096;

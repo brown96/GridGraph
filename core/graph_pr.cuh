@@ -21,7 +21,10 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*512)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define MAX_EDGES IOSIZE * 8
+#define MAX_EDGES IOSIZE / 4
+
+#define WORD_OFFSET(i) (i >> 6)
+#define BIT_OFFSET(i) (i & 0x3f)
 
 #include <cstdio>
 #include <cstdlib>
@@ -35,7 +38,6 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include <thread>
 #include <vector>
 #include <functional>
-#include <cuda_runtime.h>
 
 #include "constants.hpp"
 #include "type.hpp"
@@ -76,17 +78,6 @@ void process(VertexId *edge_h, T *parent_data, unsigned long long int * active_i
 	return;
 }
 
-__device__ double atomicLogAdd(double * address, double val) {
-	unsigned long long int *address_as_ull = (unsigned long long int*)address;
-	unsigned long long int old = *address_as_ull, assumed;
-
-	do {
-		assumed = old;
-		
-		old = atomicCAS(a)
-	}
-}
-
 template <typename T>
 __global__ void process_e(int *edge_d, int *parent_data_d, unsigned long long int *active_in_d, unsigned long long int *active_out_d, T *local_value_d, int edges){
 	unsigned int tid = threadIdx.x;
@@ -116,9 +107,6 @@ class Graph {
 	char * buffer_mem;
 	int * edge_h_mem;
 	int * edge_d_mem;
-	int * degree_mem;
-	double * pagerank_mem;
-	double * new_pagerank_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -132,6 +120,7 @@ public:
 	VertexId vertices;
 	EdgeId edges;
 	int partitions;
+	int active_size;
 
 	Graph (std::string path) {
 		PAGESIZE = 4096;
@@ -201,12 +190,8 @@ public:
 		bytes = read(fin_row_offset, row_offset, sizeof(long)*(partitions*partitions+1));
 		assert(bytes==static_cast<unsigned>(sizeof(long)*(partitions*partitions+1)));
 		close(fin_row_offset);
+		active_size = WORD_OFFSET(vertices-1) + 1;
 		if(c==-500) return;
-
-		CHECK(cudaMalloc((void**)&degree_mem, sizeof(int)*vertices));
-
-		CHECK(cudaMalloc((void**)&pagerank_mem, sizeof(double)*vertices));
-		CHECK(cudaMalloc((void**)&new_pagerank_mem, sizeof(double)*vertices));
 	}
 
 	Bitmap * alloc_bitmap() {
@@ -309,12 +294,14 @@ public:
 	}
 
 	template <typename T>
-	T stream_edges(T * parent_data, Bitmap * active_out, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
+	T stream_edges(T * parent_data_d, unsigned long long int * active_out_d, unsigned long long int * active_in_d = nullptr, T zero = 0, int update_mode = 1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_target_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_target_window = f_none_1) {
-		if (bitmap==nullptr) {
+		unsigned long long int * active_in = (unsigned long long int*)malloc(sizeof(unsigned long long int)*active_size);
+		CHECK(cudaMemcpy(active_in, active_in_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
+		if (active_in==nullptr) {
 			for (int i=0;i<partitions;i++) {
 				should_access_shard[i] = true;
 			}
@@ -328,7 +315,7 @@ public:
 				std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 				VertexId i = begin_vid;
 				while (i<end_vid) {
-					unsigned long long int word = bitmap->data[WORD_OFFSET(i)];
+					unsigned long long int word = active_in[WORD_OFFSET(i)];
 					if (word!=0) {
 						should_access_shard[partition_id] = true;
 						break;
@@ -360,24 +347,15 @@ public:
 			// printf("use buffered I/O\n");
 		}
 
+		float memcpy_time = 0;
+		float kernel_time = 0;
+
 		double start_time = get_time();
 
 		// GPUで計算した値を集計するための領域を確保
         T *local_value_h = (T*)calloc(sizeof(T), 1);
         T *local_value_d;
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
-
-		// parentのデバイス側の領域を確保
-		int *parent_data_d = parent_data_mem;
-		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(int)*vertices, cudaMemcpyHostToDevice));
-
-		// active_inのデバイス側の領域を確保
-		unsigned long long int *active_in_d = active_in_mem;
-        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
-
-		// active_outのデバイス側の領域を確保
-		unsigned long long int *active_out_d = active_out_mem;
-        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// エッジのホスト側領域確保
 		int *edge_h = edge_h_mem;
@@ -387,7 +365,9 @@ public:
 
 		double end_time = get_time();
 
-		printf("memory time =%.2fms\n", (end_time - start_time)*1000);
+		memcpy_time += (end_time - start_time)*1000;
+
+		// printf("Memcpy Vertices Information HostToDevice: %.2fms\n", (end_time - start_time)*1000);
 
 		int fin;
 		long offset = 0;
@@ -453,6 +433,7 @@ public:
 			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
 
 			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
+				// start_time = get_time();
 				VertexId begin_vid, end_vid;
 				begin_vid = get_partition_range(vertices, partitions, cur_partition).first;
 				if (cur_partition+partition_batch>=partitions) {
@@ -487,12 +468,15 @@ public:
 						}
 					}
 				}
+				// end_time = get_time();
+				// printf("Push Edge Block Information: %.2fms\n", (end_time - start_time)*1000);
 				// printf("count=%d\n", count);
 				
 				// cudaStream_t streams[count];
 				// for (int i = 0; i < count; i++) {
 				// 	CHECK(cudaStreamCreate(&streams[i]));
 				// }
+				// start_time = get_time();
 
                 tasks.push(std::make_tuple(-1, 0, 0));
 
@@ -505,7 +489,12 @@ public:
 
 				int count_while = 0;
 				int local_edges = 0;
+
+				// end_time = get_time();
+				// printf("Initialize Process: %.2fms\n", (end_time - start_time)*1000);
+				
 				while (true) {
+					// start_time = get_time();
 					int fin = -1;
 					long offset, length;
 					std::tie(fin, offset, length) = tasks.pop();
@@ -516,6 +505,8 @@ public:
 					local_read_bytes += bytes;
 
 					int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
+					// end_time = get_time();
+					// printf("Read Edges from Files: %.2fms\n", (end_time - start_time)*1000);
 
 					if (local_edges + edges > MAX_EDGES) {
 						cudaEvent_t time1, time2, time3;
@@ -545,15 +536,19 @@ public:
 						cudaEventDestroy(time2);
 						cudaEventDestroy(time3);
 
+						memcpy_time += time12;
+						kernel_time += time23;
+
 						printf("block %d:\nedges=%d\n", count_while, local_edges);
-						printf("time12: %.2fms\n", time12);
-						printf("time23: %.2fms\n\n", time23);
+						// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
+						// printf("Kernel Execution: %.2fms\n", time23);
 						local_edges = 0;
 						count_while++;
 					}
 
 					// CHECK: start position should be offset % edge_unit
 
+					// start_time = get_time();
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
 					long pos = offset % edge_unit;
 					for (int i = 0; i < edges; i++) {
@@ -568,6 +563,8 @@ public:
 					}
 					
 					local_edges += edges;
+					// end_time = get_time();
+					// printf("Store Edges to Host Memory: %.2fms\n", (end_time - start_time)*1000);
 					// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 				}
 
@@ -599,9 +596,12 @@ public:
 					cudaEventDestroy(time2);
 					cudaEventDestroy(time3);
 
+					memcpy_time += time12;
+					kernel_time += time23;
+
 					printf("block %d:\nedges=%d\n", count_while, local_edges);
-					printf("time12: %.2fms\n", time12);
-					printf("time23: %.2fms\n\n", time23);
+					// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
+					// printf("Kernel Execution: %.2fms\n", time23);
 				}
 
 				// for (int i = 0; i < count; i++) {
@@ -613,11 +613,9 @@ public:
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
-
-			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
-			CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(int)*vertices, cudaMemcpyDeviceToHost));
-			CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
-
+			// printf("Memcpy Vertices Information DeviceToHost: %.2fms\n", (end_time - start_time)*1000);
+			printf("Total Edge Memcpy time: %.2fms\n", memcpy_time);
+			printf("Total Kernel time: %.2fms\n", kernel_time);
 			break;
 		default:
 			assert(false);

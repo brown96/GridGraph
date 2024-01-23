@@ -43,6 +43,14 @@ int main(int argc, char ** argv) {
 	CHECK(cudaMalloc((void**)&parent_data_d, sizeof(VertexId)*graph.vertices));
 	CHECK(cudaMemcpy(parent_data_d, parent.data, sizeof(VertexId)*graph.vertices, cudaMemcpyHostToDevice));
 
+	unsigned long long int *active_in_d;
+	CHECK(cudaMalloc((void**)&active_in_d, sizeof(unsigned long long int)*graph.active_size));
+	CHECK(cudaMemcpy(active_in_d, active_in->data, sizeof(unsigned long long int)*graph.active_size, cudaMemcpyHostToDevice));
+
+	unsigned long long int *active_out_d;
+	CHECK(cudaMalloc((void**)&active_out_d, sizeof(unsigned long long int)*graph.active_size));
+	CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*graph.active_size, cudaMemcpyHostToDevice));
+
 	double start_time = get_time();
 	int iteration = 0;
 	while (active_vertices!=0) {

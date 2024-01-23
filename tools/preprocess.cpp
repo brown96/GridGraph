@@ -93,6 +93,8 @@ void generate_edge_grid(std::string input, std::string output, VertexId vertices
 		}
 	}
 
+	int * edge_nums = new int [vertices];
+
 	std::vector<std::thread> threads;
 	for (int ti=0;ti<parallelism;ti++) {
 		threads.emplace_back([&]() {
@@ -127,6 +129,7 @@ void generate_edge_grid(std::string input, std::string output, VertexId vertices
 					target = *(VertexId*)(buffer+pos+sizeof(VertexId));
 					int i = get_partition_id(vertices, partitions, source);
 					int j = get_partition_id(vertices, partitions, target);
+					__sync_add_and_fetch(&edge_nums[source], 1);
 					*(VertexId*)(local_buffer+local_grid_cursor[i*partitions+j]) = source;
 					*(VertexId*)(local_buffer+local_grid_cursor[i*partitions+j]+sizeof(VertexId)) = target;
 					if (edge_type==1) {
@@ -267,6 +270,12 @@ void generate_edge_grid(std::string input, std::string output, VertexId vertices
 	FILE * fmeta = fopen((output+"/meta").c_str(), "w");
 	fprintf(fmeta, "%d %d %ld %d", edge_type, vertices, edges, partitions);
 	fclose(fmeta);
+
+	FILE * fedges = fopen((output+"/edges").c_str(), "w");
+	for (int i = 0; i < vertices; i++) {
+		fprintf(fedges, "%d ", edge_nums[i]);
+	}
+	fclose(fedges);
 }
 
 int main(int argc, char ** argv) {

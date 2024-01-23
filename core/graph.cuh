@@ -117,6 +117,7 @@ class Graph {
 	int partition_batch;
 	long vertex_data_bytes;
 	long PAGESIZE;
+	int * edge_nums;
 public:
 	std::string path;
 
@@ -151,6 +152,14 @@ public:
 		FILE * fin_meta = fopen((path+"/meta").c_str(), "r");
 		c = fscanf(fin_meta, "%d %d %ld %d", &edge_type, &vertices, &edges, &partitions);
 		fclose(fin_meta);
+
+		edge_nums = new int [vertices];
+
+		FILE * fin_edges = fopen((path+"/edges").c_str(), "r");
+		for (int i = 0; i < vertices; i++) {
+			c = fscanf(fin_edges, "%d ", &edge_nums[i]);
+		}
+		fclose(fin_edges);
 
 		if (edge_type==0) {
 			PAGESIZE = 4096;

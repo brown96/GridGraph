@@ -14,7 +14,7 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
    limitations under the License.
 */
 
-#include "../core/graph.cuh"
+#include "../core/graph_bfs.cuh"
 
 int main(int argc, char ** argv) {
 	if (argc<3) {

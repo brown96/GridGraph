@@ -56,15 +56,17 @@ int main(int argc, char ** argv) {
 	while (active_vertices!=0) {
 		iteration++;
 		printf("%7d: %d\n", iteration, active_vertices);
-		std::swap(active_in, active_out);
-		active_out->clear();
+		CHECK(cudaMemcpy(active_in_d, active_out_d, sizeof(unsigned long long int)*graph.active_size, cudaMemcpyDeviceToDevice));
+		CHECK(cudaMemset(active_out_d, 0, sizeof(unsigned long long int)*graph.active_size));
 		graph.hint(parent);
-		double start_time_e = get_time();
-		active_vertices = graph.stream_edges<VertexId>(parent.data, active_out, active_in);
-		double end_time_e = get_time();
-		printf("Total Stream: %.2fms\n\n", (end_time_e - start_time_e)*1000);
+		// double start_time_e = get_time();
+		active_vertices = graph.stream_edges<VertexId>(parent_data_d, active_out_d, active_in_d);
+		// double end_time_e = get_time();
+		// printf("Total Stream: %.2fms\n\n", (end_time_e - start_time_e)*1000);
 	}
 	double end_time = get_time();
+
+	CHECK(cudaMemcpy(parent.data, parent_data_d, sizeof(VertexId)*graph.vertices, cudaMemcpyDeviceToHost));
 
 	int discovered_vertices = graph.stream_vertices<VertexId>([&](VertexId i){
 		return parent[i]!=-1;

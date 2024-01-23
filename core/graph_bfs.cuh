@@ -107,9 +107,6 @@ class Graph {
 	char * buffer_mem;
 	int * edge_h_mem;
 	int * edge_d_mem;
-	int * parent_data_mem;
-	unsigned long long int * active_in_mem;
-	unsigned long long int * active_out_mem;
 	long * column_offset;
 	long * row_offset;
 	long memory_bytes;
@@ -193,14 +190,8 @@ public:
 		bytes = read(fin_row_offset, row_offset, sizeof(long)*(partitions*partitions+1));
 		assert(bytes==static_cast<unsigned>(sizeof(long)*(partitions*partitions+1)));
 		close(fin_row_offset);
-		if(c==-500) return;
-
-		CHECK(cudaMalloc((void**)&parent_data_mem, sizeof(int)*vertices));
-
 		active_size = WORD_OFFSET(vertices-1) + 1;
-
-		CHECK(cudaMalloc((void**)&active_in_mem, sizeof(unsigned long long int)*active_size));
-		CHECK(cudaMalloc((void**)&active_out_mem, sizeof(unsigned long long int)*active_size));
+		if(c==-500) return;
 	}
 
 	Bitmap * alloc_bitmap() {
@@ -303,12 +294,14 @@ public:
 	}
 
 	template <typename T>
-	T stream_edges(T * parent_data, Bitmap * active_out, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
+	T stream_edges(T * parent_data_d, unsigned long long int * active_out_d, unsigned long long int * active_in_d = nullptr, T zero = 0, int update_mode = 1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_target_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_target_window = f_none_1) {
-		if (bitmap==nullptr) {
+		unsigned long long int * active_in = (unsigned long long int*)malloc(sizeof(unsigned long long int)*active_size);
+		CHECK(cudaMemcpy(active_in, active_in_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
+		if (active_in==nullptr) {
 			for (int i=0;i<partitions;i++) {
 				should_access_shard[i] = true;
 			}
@@ -322,7 +315,7 @@ public:
 				std::tie(begin_vid, end_vid) = get_partition_range(vertices, partitions, partition_id);
 				VertexId i = begin_vid;
 				while (i<end_vid) {
-					unsigned long long int word = bitmap->data[WORD_OFFSET(i)];
+					unsigned long long int word = active_in[WORD_OFFSET(i)];
 					if (word!=0) {
 						should_access_shard[partition_id] = true;
 						break;
@@ -363,18 +356,6 @@ public:
         T *local_value_h = (T*)calloc(sizeof(T), 1);
         T *local_value_d;
         CHECK(cudaMalloc((void**)&local_value_d, sizeof(T)*1));
-
-		// parentのデバイス側の領域を確保
-		int *parent_data_d = parent_data_mem;
-		CHECK(cudaMemcpy(parent_data_d, parent_data, sizeof(int)*vertices, cudaMemcpyHostToDevice));
-
-		// active_inのデバイス側の領域を確保
-		unsigned long long int *active_in_d = active_in_mem;
-        CHECK(cudaMemcpy(active_in_d, bitmap->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
-
-		// active_outのデバイス側の領域を確保
-		unsigned long long int *active_out_d = active_out_mem;
-        CHECK(cudaMemcpy(active_out_d, active_out->data, sizeof(unsigned long long int)*active_size, cudaMemcpyHostToDevice));
 
 		// エッジのホスト側領域確保
 		int *edge_h = edge_h_mem;
@@ -632,14 +613,6 @@ public:
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
-
-			// parentとactive_outのホスト側の領域にデバイス側の領域からコピー
-			start_time = get_time();
-			CHECK(cudaMemcpy(parent_data, parent_data_d, sizeof(int)*vertices, cudaMemcpyDeviceToHost));
-			CHECK(cudaMemcpy(active_out->data, active_out_d, sizeof(unsigned long long int)*active_size, cudaMemcpyDeviceToHost));
-			cudaDeviceSynchronize();
-			end_time = get_time();
-			memcpy_time += (end_time - start_time)*1000;
 			// printf("Memcpy Vertices Information DeviceToHost: %.2fms\n", (end_time - start_time)*1000);
 			printf("Total Edge Memcpy time: %.2fms\n", memcpy_time);
 			printf("Total Kernel time: %.2fms\n", kernel_time);

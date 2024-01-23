@@ -34,7 +34,7 @@ bin/mis: examples/mis.cpp $(HEADERS)
 bin/radii: examples/radii.cpp $(HEADERS)
 	$(CXX) $(CXXFLAGS) -o $@ $< $(SYSLIBS)
 
-bin/bfs_gpu: examples/bfs_rev.cu core/graph.cuh core/graph_bfs.cuh core/constants.hpp
+bin/bfs_gpu: examples/bfs_rev.cu core/graph.cuh core/graph_bfs.cuh core/graph_cpu.cuh core/constants.hpp
 	$(NVCC) $(NVCCFLAGS) -o $@ $< $(SYSLIBS)
 
 clean:

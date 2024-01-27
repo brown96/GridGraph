@@ -260,6 +260,11 @@ public:
 		return value;
 	}
 
+	template <typename T>
+	void stream_vertices_gpu(float *pagerank_d, float *sum_d) {
+		
+	}
+
 	void set_partition_batch(long bytes) {
 		int x = (int)ceil(bytes / (0.8 * memory_bytes));
 		partition_batch = partitions / x;

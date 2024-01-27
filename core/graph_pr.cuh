@@ -65,6 +65,15 @@ __device__ void atomicLogAdd(float *address, float val) {
 	}
 }
 
+__global__ void process_v(float *pagerank_d, float *sum_d, int vertices) {
+	unsigned int tid = threadIdx.x;
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx >= vertices) return;
+
+	pagerank_d[idx] = logAdd(logf(0.15), logf(0.85)+sum_d[idx]);
+}
+
 __global__ void process_e(int *edge_d, int *degree_d, float *pagerank_d, float *sum_d, int edges) {
 	unsigned int tid = threadIdx.x;
 	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
@@ -123,7 +132,7 @@ public:
 		memset(buffer_mem, 0, IOSIZE);
 		edge_h_mem = (int*)malloc(sizeof(int)*MAX_EDGES*2);
 		memset(edge_h_mem, -1, MAX_EDGES*2);
-		CHECK(cudaMalloc((void**)&edge_d_mem, sizeof(int)*2));
+		CHECK(cudaMalloc((void**)&edge_d_mem, sizeof(int)*MAX_EDGES*2));
 		init(path);
 	}
 
@@ -262,7 +271,8 @@ public:
 
 	template <typename T>
 	void stream_vertices_gpu(float *pagerank_d, float *sum_d) {
-		
+		process_v<<<(vertices + BS - 1) / BS, BS>>>(pagerank_d, sum_d, vertices);
+		cudaDeviceSynchronize();
 	}
 
 	void set_partition_batch(long bytes) {
@@ -535,6 +545,7 @@ public:
 			read_mode = O_RDONLY;
 			// printf("use buffered I/O\n");
 		}
+
 		float memcpy_time = 0;
 		float kernel_time = 0;
 
@@ -546,151 +557,259 @@ public:
 		// エッジのデバイス側領域確保
 		int *edge_d = edge_d_mem;
 
+		double end_time = get_time();
+
+		memcpy_time += (end_time - start_time)*1000;
+
+		// printf("Memcpy Vertices Information HostToDevice: %.2fms\n", (end_time - start_time)*1000);
+
 		int fin;
 		long offset = 0;
-		fin = open((path+"/column").c_str(), read_mode);
-		//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
+		switch(update_mode) {
+		case 0: // source oriented update
+			// threads.clear();
+			// for (int ti=0;ti<parallelism;ti++) {
+			// 	threads.emplace_back([&](int thread_id){
+			// 		T local_value = zero;
+			// 		long local_read_bytes = 0;
+			// 		while (true) {
+			// 			int fin;
+			// 			long offset, length;
+			// 			std::tie(fin, offset, length) = tasks.pop();
+			// 			if (fin==-1) break;
+			// 			char * buffer = buffer_pool[thread_id];
+			// 			long bytes = pread(fin, buffer, length, offset);
+			// 			assert(bytes>0);
+			// 			local_read_bytes += bytes;
+			// 			// CHECK: start position should be offset % edge_unit
+			// 			for (long pos=offset % edge_unit;pos+edge_unit<=bytes;pos+=edge_unit) {
+			// 				VertexId & src = *(VertexId*)(buffer+pos);
+			// 				VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+			// 				if (bitmap->data==nullptr || bitmap->data[WORD_OFFSET(src)] & (1ul<<BIT_OFFSET(src))) {
+			// 					local_value += process(src, dst, parent_data, active_out->data, 0);
+			// 				}
+			// 			}
+			// 		}
+			// 		write_add(&value, local_value);
+			// 		write_add(&read_bytes, local_read_bytes);
+			// 	}, ti);
+			// }
+			// fin = open((path+"/row").c_str(), read_mode);
+			// //posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
+			// for (int i=0;i<partitions;i++) {
+			// 	if (!should_access_shard[i]) continue;
+			// 	for (int j=0;j<partitions;j++) {
+			// 		long begin_offset = row_offset[i*partitions+j];
+			// 		if (begin_offset - offset >= PAGESIZE) {
+			// 			offset = begin_offset / PAGESIZE * PAGESIZE;
+			// 		}
+			// 		long end_offset = row_offset[i*partitions+j+1];
+			// 		if (end_offset <= offset) continue;
+			// 		while (end_offset - offset >= IOSIZE) {
+			// 			tasks.push(std::make_tuple(fin, offset, IOSIZE));
+			// 			offset += IOSIZE;
+			// 		}
+			// 		if (end_offset > offset) {
+			// 			tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
+			// 			offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
+			// 		}
+			// 	}
+			// }
+			// for (int i=0;i<parallelism;i++) {
+			// 	tasks.push(std::make_tuple(-1, 0, 0));
+			// }
+			// for (int i=0;i<parallelism;i++) {
+			// 	threads[i].join();
+			// }
+			break;
+		case 1: // target oriented update
+			fin = open((path+"/column").c_str(), read_mode);
+			//posix_fadvise(fin, 0, 0, POSIX_FADV_SEQUENTIAL); //This is mostly useless on modern system
 
-		for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
-			// start_time = get_time();
-			VertexId begin_vid, end_vid;
-			begin_vid = get_partition_range(vertices, partitions, cur_partition).first;
-			if (cur_partition+partition_batch>=partitions) {
-				end_vid = vertices;
-			} else {
-				end_vid = get_partition_range(vertices, partitions, cur_partition+partition_batch).first;
-			}
-			pre_source_window(std::make_pair(begin_vid, end_vid));
-			// printf("pre %d %d\n", begin_vid, end_vid);
-            offset = 0;
-			int count = 0;
-			for (int j=0;j<partitions;j++) {
-				for (int i=cur_partition;i<cur_partition+partition_batch;i++) {
-					if (i>=partitions) break;
-					if (!should_access_shard[i]) continue;
-					long begin_offset = column_offset[j*partitions+i];
-					if (begin_offset - offset >= PAGESIZE) {
-						offset = begin_offset / PAGESIZE * PAGESIZE;
-					}
-					long end_offset = column_offset[j*partitions+i+1];
-					if (end_offset <= offset) continue;
-					while (end_offset - offset >= IOSIZE) {
-						tasks.push(std::make_tuple(fin, offset, IOSIZE));
-						count++;
-						offset += IOSIZE;
-					}
-					if (end_offset > offset) {
-						tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
-						count++;
-						offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
+			for (int cur_partition=0;cur_partition<partitions;cur_partition+=partition_batch) {
+				// start_time = get_time();
+				VertexId begin_vid, end_vid;
+				begin_vid = get_partition_range(vertices, partitions, cur_partition).first;
+				if (cur_partition+partition_batch>=partitions) {
+					end_vid = vertices;
+				} else {
+					end_vid = get_partition_range(vertices, partitions, cur_partition+partition_batch).first;
+				}
+				pre_source_window(std::make_pair(begin_vid, end_vid));
+				// printf("pre %d %d\n", begin_vid, end_vid);
+
+                offset = 0;
+				int count = 0;
+				for (int j=0;j<partitions;j++) {
+					for (int i=cur_partition;i<cur_partition+partition_batch;i++) {
+						if (i>=partitions) break;
+						if (!should_access_shard[i]) continue;
+						long begin_offset = column_offset[j*partitions+i];
+						if (begin_offset - offset >= PAGESIZE) {
+							offset = begin_offset / PAGESIZE * PAGESIZE;
+						}
+						long end_offset = column_offset[j*partitions+i+1];
+						if (end_offset <= offset) continue;
+						while (end_offset - offset >= IOSIZE) {
+							tasks.push(std::make_tuple(fin, offset, IOSIZE));
+							count++;
+							offset += IOSIZE;
+						}
+						if (end_offset > offset) {
+							tasks.push(std::make_tuple(fin, offset, (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE));
+							count++;
+							offset += (end_offset - offset + PAGESIZE - 1) / PAGESIZE * PAGESIZE;
+						}
 					}
 				}
-			}
-            tasks.push(std::make_tuple(-1, 0, 0));
-
-			long local_read_bytes = 0;
-			
-			int count_while = 0;
-			int local_edges = 0;
-			// end_time = get_time();
-			// printf("Initialize Process: %.2fms\n", (end_time - start_time)*1000);
-			
-			while (true) {
-				// start_time = get_time();
-				int fin = -1;
-				long offset, length;
-				std::tie(fin, offset, length) = tasks.pop();
-				if (fin==-1) break;
-				char * buffer = buffer_mem;
-				long bytes = pread(fin, buffer, length, offset);
-				assert(bytes>0);
-				local_read_bytes += bytes;
-				int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
 				// end_time = get_time();
-				// printf("Read Edges from Files: %.2fms\n", (end_time - start_time)*1000);
-				if (local_edges + edges > MAX_EDGES) {
+				// printf("Push Edge Block Information: %.2fms\n", (end_time - start_time)*1000);
+				// printf("count=%d\n", count);
+				
+				// cudaStream_t streams[count];
+				// for (int i = 0; i < count; i++) {
+				// 	CHECK(cudaStreamCreate(&streams[i]));
+				// }
+				// start_time = get_time();
+
+                tasks.push(std::make_tuple(-1, 0, 0));
+
+				long local_read_bytes = 0;
+				
+				// printf("remain_size=%ld\n", 2l*1024l*1024l*1024l - sizeof(T)*vertices - sizeof(unsigned long long int)*active_size*2 - sizeof(T) - sizeof(int)*IOSIZE/edge_unit*2);
+				// printf("edge_size=%ld\n", sizeof(int)*IOSIZE/edge_unit*2);
+
+				int count_while = 0;
+				int local_edges = 0;
+
+				// end_time = get_time();
+				// printf("Initialize Process: %.2fms\n", (end_time - start_time)*1000);
+				
+				while (true) {
+					// start_time = get_time();
+					int fin = -1;
+					long offset, length;
+					std::tie(fin, offset, length) = tasks.pop();
+					if (fin==-1) break;
+					char * buffer = buffer_mem;
+					long bytes = pread(fin, buffer, length, offset);
+					assert(bytes>0);
+					local_read_bytes += bytes;
+
+					int edges = (bytes - (offset % edge_unit)) / edge_unit; // 読み込まれたエッジ数
+					// end_time = get_time();
+					// printf("Read Edges from Files: %.2fms\n", (end_time - start_time)*1000);
+
+					if (local_edges + edges > MAX_EDGES) {
+						cudaEvent_t time1, time2, time3;
+						cudaEventCreate(&time1);
+						cudaEventCreate(&time2);
+						cudaEventCreate(&time3);
+						
+						cudaEventRecord(time1, 0);
+
+						CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*1, cudaMemcpyHostToDevice));
+
+						cudaEventRecord(time2, 0);
+						cudaEventSynchronize(time2);
+
+						process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
+
+						cudaEventRecord(time3, 0);
+						cudaEventSynchronize(time3);
+
+						float time12;
+						cudaEventElapsedTime(&time12, time1, time2);
+
+						float time23;
+						cudaEventElapsedTime(&time23, time2, time3);
+
+						cudaEventDestroy(time1);
+						cudaEventDestroy(time2);
+						cudaEventDestroy(time3);
+
+						memcpy_time += time12;
+						kernel_time += time23;
+
+						printf("block %d:\nedges=%d\n", count_while, local_edges);
+						// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
+						// printf("Kernel Execution: %.2fms\n", time23);
+						local_edges = 0;
+						count_while++;
+					}
+
+					// CHECK: start position should be offset % edge_unit
+
+					// start_time = get_time();
+					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
+					long pos = offset % edge_unit;
+					for (int i = 0; i < edges; i++) {
+						VertexId & src = *(VertexId*)(buffer+pos);
+						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
+						edge_h[(local_edges + i)*2] = src;
+						edge_h[(local_edges + i)*2+1] = dst;
+						pos += edge_unit;
+						if (src < begin_vid || src >= end_vid) {
+							continue;
+						}
+					}
+					
+					local_edges += edges;
+					// end_time = get_time();
+					// printf("Store Edges to Host Memory: %.2fms\n", (end_time - start_time)*1000);
+					// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
+				}
+
+				if (local_edges != 0) {
 					cudaEvent_t time1, time2, time3;
 					cudaEventCreate(&time1);
 					cudaEventCreate(&time2);
 					cudaEventCreate(&time3);
 					
 					cudaEventRecord(time1, 0);
+
 					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
+
 					cudaEventRecord(time2, 0);
 					cudaEventSynchronize(time2);
+
 					process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
+
 					cudaEventRecord(time3, 0);
 					cudaEventSynchronize(time3);
+
 					float time12;
 					cudaEventElapsedTime(&time12, time1, time2);
+
 					float time23;
 					cudaEventElapsedTime(&time23, time2, time3);
+
 					cudaEventDestroy(time1);
 					cudaEventDestroy(time2);
 					cudaEventDestroy(time3);
+
 					memcpy_time += time12;
 					kernel_time += time23;
+
 					printf("block %d:\nedges=%d\n", count_while, local_edges);
 					// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
 					// printf("Kernel Execution: %.2fms\n", time23);
-					local_edges = 0;
-					count_while++;
 				}
-				// CHECK: start position should be offset % edge_unit
-				// start_time = get_time();
-				// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
-				long pos = offset % edge_unit;
-				for (int i = 0; i < edges; i++) {
-					VertexId & src = *(VertexId*)(buffer+pos);
-					VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-					edge_h[(local_edges + i)*2] = src;
-					edge_h[(local_edges + i)*2+1] = dst;
-					pos += edge_unit;
-					if (src < begin_vid || src >= end_vid) {
-						continue;
-					}
-				}
-				
-				local_edges += edges;
-				// end_time = get_time();
-				// printf("Store Edges to Host Memory: %.2fms\n", (end_time - start_time)*1000);
-				// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
+
+				// for (int i = 0; i < count; i++) {
+				// 	CHECK(cudaStreamDestroy(streams[i]));
+				// }
+				write_add(&read_bytes, local_read_bytes);
+				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
-			if (local_edges != 0) {
-				cudaEvent_t time1, time2, time3;
-				cudaEventCreate(&time1);
-				cudaEventCreate(&time2);
-				cudaEventCreate(&time3);
-				
-				cudaEventRecord(time1, 0);
-				CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
-				cudaEventRecord(time2, 0);
-				cudaEventSynchronize(time2);
-				process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
-				cudaEventRecord(time3, 0);
-				cudaEventSynchronize(time3);
-				float time12;
-				cudaEventElapsedTime(&time12, time1, time2);
-				float time23;
-				cudaEventElapsedTime(&time23, time2, time3);
-				cudaEventDestroy(time1);
-				cudaEventDestroy(time2);
-				cudaEventDestroy(time3);
-				memcpy_time += time12;
-				kernel_time += time23;
-				printf("block %d:\nedges=%d\n", count_while, local_edges);
-				// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
-				// printf("Kernel Execution: %.2fms\n", time23);
-			}
-			// for (int i = 0; i < count; i++) {
-			// 	CHECK(cudaStreamDestroy(streams[i]));
-			// }
-			write_add(&read_bytes, local_read_bytes);
-			post_source_window(std::make_pair(begin_vid, end_vid));
+			// printf("Memcpy Vertices Information DeviceToHost: %.2fms\n", (end_time - start_time)*1000);
+			printf("Total Edge Memcpy time: %.2fms\n", memcpy_time);
+			printf("Total Kernel time: %.2fms\n", kernel_time);
+			break;
+		default:
+			assert(false);
 		}
-		// printf("Memcpy Vertices Information DeviceToHost: %.2fms\n", (end_time - start_time)*1000);
-		printf("Total Edge Memcpy time: %.2fms\n", memcpy_time);
-		printf("Total Kernel time: %.2fms\n", kernel_time);
+
 		close(fin);
 		// printf("streamed %ld bytes of edges\n", read_bytes);
 	}

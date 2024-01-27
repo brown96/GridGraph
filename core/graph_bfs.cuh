@@ -21,7 +21,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*512)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define MAX_EDGES IOSIZE / 4
+#define MAX_EDGES IOSIZE
 
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)

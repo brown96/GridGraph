@@ -495,7 +495,7 @@ public:
 		return value;
 	}
 	template <typename T>
-	void stream_edges_gpu(VertexId *degree_d, float *pagerank_d, float *sum_d, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
+	void stream_edges_cpu(VertexId *degree, float *pagerank, float *sum, Bitmap * bitmap = nullptr, T zero = 0, int update_mode = 1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> post_source_window = f_none_1,
 		std::function<void(std::pair<VertexId,VertexId> vid_range)> pre_target_window = f_none_1,
@@ -550,12 +550,6 @@ public:
 		float kernel_time = 0;
 
 		double start_time = get_time();
-
-		// エッジのホスト側領域確保
-		int *edge_h = edge_h_mem;
-
-		// エッジのデバイス側領域確保
-		int *edge_d = edge_d_mem;
 
 		double end_time = get_time();
 
@@ -700,44 +694,6 @@ public:
 					// end_time = get_time();
 					// printf("Read Edges from Files: %.2fms\n", (end_time - start_time)*1000);
 
-					if (local_edges + edges > MAX_EDGES) {
-						cudaEvent_t time1, time2, time3;
-						cudaEventCreate(&time1);
-						cudaEventCreate(&time2);
-						cudaEventCreate(&time3);
-						
-						cudaEventRecord(time1, 0);
-
-						CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*1, cudaMemcpyHostToDevice));
-
-						cudaEventRecord(time2, 0);
-						cudaEventSynchronize(time2);
-
-						process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
-
-						cudaEventRecord(time3, 0);
-						cudaEventSynchronize(time3);
-
-						float time12;
-						cudaEventElapsedTime(&time12, time1, time2);
-
-						float time23;
-						cudaEventElapsedTime(&time23, time2, time3);
-
-						cudaEventDestroy(time1);
-						cudaEventDestroy(time2);
-						cudaEventDestroy(time3);
-
-						memcpy_time += time12;
-						kernel_time += time23;
-
-						printf("block %d:\nedges=%d\n", count_while, local_edges);
-						// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
-						// printf("Kernel Execution: %.2fms\n", time23);
-						local_edges = 0;
-						count_while++;
-					}
-
 					// CHECK: start position should be offset % edge_unit
 
 					// start_time = get_time();
@@ -746,54 +702,17 @@ public:
 					for (int i = 0; i < edges; i++) {
 						VertexId & src = *(VertexId*)(buffer+pos);
 						VertexId & dst = *(VertexId*)(buffer+pos+sizeof(VertexId));
-						edge_h[(local_edges + i)*2] = src;
-						edge_h[(local_edges + i)*2+1] = dst;
 						pos += edge_unit;
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
+						sum[dst] += pagerank[src] - log(degree[src]);
 					}
 					
 					local_edges += edges;
 					// end_time = get_time();
 					// printf("Store Edges to Host Memory: %.2fms\n", (end_time - start_time)*1000);
 					// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
-				}
-
-				if (local_edges != 0) {
-					cudaEvent_t time1, time2, time3;
-					cudaEventCreate(&time1);
-					cudaEventCreate(&time2);
-					cudaEventCreate(&time3);
-					
-					cudaEventRecord(time1, 0);
-
-					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
-
-					cudaEventRecord(time2, 0);
-					cudaEventSynchronize(time2);
-
-					process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
-
-					cudaEventRecord(time3, 0);
-					cudaEventSynchronize(time3);
-
-					float time12;
-					cudaEventElapsedTime(&time12, time1, time2);
-
-					float time23;
-					cudaEventElapsedTime(&time23, time2, time3);
-
-					cudaEventDestroy(time1);
-					cudaEventDestroy(time2);
-					cudaEventDestroy(time3);
-
-					memcpy_time += time12;
-					kernel_time += time23;
-
-					printf("block %d:\nedges=%d\n", count_while, local_edges);
-					// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
-					// printf("Kernel Execution: %.2fms\n", time23);
 				}
 
 				// for (int i = 0; i < count; i++) {

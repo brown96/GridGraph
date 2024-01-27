@@ -46,25 +46,14 @@ int main(int argc, char ** argv) {
 	);
 	printf("degree calculation used %.2f seconds\n", get_time() - begin_time);
 
-	VertexId *degree_d;
-	CHECK(cudaMalloc((void**)&degree_d, sizeof(VertexId)*graph.vertices));
-	CHECK(cudaMemcpy(degree_d, degree.data, sizeof(VertexId)*graph.vertices, cudaMemcpyHostToDevice));
-
 	pagerank.fill(0);
 
-	float *pagerank_d;
-	CHECK(cudaMalloc((void**)&pagerank_d, sizeof(float)*graph.vertices));
-	CHECK(cudaMemset(pagerank_d, 0, sizeof(float)*graph.vertices));
-
-	float *sum_d;
-	CHECK(cudaMalloc((void**)&sum_d, sizeof(float)*graph.vertices));
-
 	for (int iter=0; iter < iterations; iter++) {
-		CHECK(cudaMemset(sum_d, 0xff800000, sizeof(float)*graph.vertices));
-		graph.stream_edges_gpu<VertexId>(degree_d, pagerank_d, sum_d);
-		graph.stream_vertices_gpu<VertexId>(pagerank_d, sum_d);
+		sum.fill(0xff800000);
+		// graph.stream_edges_gpu<VertexId>(degree_d, pagerank_d, sum_d);
+		graph.stream_edges_cpu<VertexId>(degree.data, pagerank.data, sum.data);
+		// graph.stream_vertices_gpu<VertexId>(pagerank_d, sum_d);
 	}
 
-	CHECK(cudaMemcpy(pagerank.data, pagerank_d, sizeof(float)*graph.vertices, cudaMemcpyDeviceToHost));
 	for (int i = 0; i < 10; i++) printf("pagerank[%d]]=%f\n", i, pagerank[i]);
 }

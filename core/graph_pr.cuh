@@ -33,6 +33,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #include <thread>
 #include <vector>
 #include <functional>
+#include <cuda_runtime.h>
 
 #include "constants.hpp"
 #include "type.hpp"
@@ -64,12 +65,15 @@ __device__ void atomicLogAdd(float *address, float val) {
 	}
 }
 
-// __global__ void testLogAdd(float *test) {
-// 	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
-// 	// printf("idx=%d\n", idx);
-// 	if (idx >= 1023) return;
-// 	atomicLogAdd(&test[idx%2], log1pf(idx));
-// }
+__global__ void process_e(int *edge_d, int *degree_d, float *pagerank_d, float *sum_d, int edges) {
+	unsigned int tid = threadIdx.x;
+	unsigned int idx = blockIdx.x * blockDim.x + threadIdx.x;
+
+	if (idx >= edges) return;
+	
+	float value = pagerank_d[edge_d[idx*2]] - logf(degree_d[edge_d[idx*2]]);
+	atomicLogAdd(&sum_d[edge_d[idx*2+1]], value);
+}
 
 bool f_true(VertexId v) {
 	return true;
@@ -609,7 +613,7 @@ public:
 					CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
 					cudaEventRecord(time2, 0);
 					cudaEventSynchronize(time2);
-					// process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, local_edges);
+					process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
 					cudaEventRecord(time3, 0);
 					cudaEventSynchronize(time3);
 					float time12;
@@ -657,7 +661,7 @@ public:
 				CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
 				cudaEventRecord(time2, 0);
 				cudaEventSynchronize(time2);
-				// process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, parent_data_d, active_in_d, active_out_d, local_value_d, local_edges);
+				process_e<<<(local_edges+BS-1)/BS, BS>>>(edge_d, degree_d, pagerank_d, sum_d, local_edges);
 				cudaEventRecord(time3, 0);
 				cudaEventSynchronize(time3);
 				float time12;

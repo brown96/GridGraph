@@ -54,7 +54,7 @@ int main(int argc, char ** argv) {
 
 	float *pagerank_d;
 	CHECK(cudaMalloc((void**)&pagerank_d, sizeof(float)*graph.vertices));
-	CHECK(cudaMemcpy(pagerank_d, pagerank.data, sizeof(float)*graph.vertices, cudaMemcpyHostToDevice));
+	CHECK(cudaMemset(pagerank_d, 0, sizeof(float)*graph.vertices));
 
 	float *sum_d;
 	CHECK(cudaMalloc((void**)&sum_d, sizeof(float)*graph.vertices));

@@ -53,6 +53,7 @@ int main(int argc, char ** argv) {
 		// graph.stream_edges_gpu<VertexId>(degree_d, pagerank_d, sum_d);
 		graph.stream_edges_cpu<VertexId>(degree.data, pagerank.data, sum.data);
 		// graph.stream_vertices_gpu<VertexId>(pagerank_d, sum_d);
+		graph.stream_vertices_cpu<VertexId>(pagerank.data, sum.data);
 	}
 
 	for (int i = 0; i < 10; i++) printf("pagerank[%d]]=%f\n", i, pagerank[i]);

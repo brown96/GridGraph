@@ -54,6 +54,15 @@ __device__ float logAdd(float log_a, float log_b) {
 	}
 }
 
+float logAdd_c(float log_a, float log_b) {
+	if (log_a > log_b) {
+		return log_a + log1p(exp(log_b - log_a));
+	}
+	else {
+		return log_b + log1p(exp(log_a - log_b));
+	}
+}
+
 __device__ void atomicLogAdd(float *address, float val) {
 	int i_val = __float_as_int(val);
 	int tmp0 = 0;
@@ -270,9 +279,10 @@ public:
 	}
 
 	template <typename T>
-	void stream_vertices_gpu(float *pagerank_d, float *sum_d) {
-		process_v<<<(vertices + BS - 1) / BS, BS>>>(pagerank_d, sum_d, vertices);
-		cudaDeviceSynchronize();
+	void stream_vertices_cpu(float *pagerank, float *sum) {
+		for (int i = 0; i < vertices; i++) {
+			pagerank[i] = logAdd_c(log(0.15), log(0.85)+sum[i]);
+		}
 	}
 
 	void set_partition_batch(long bytes) {

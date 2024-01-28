@@ -549,17 +549,11 @@ public:
 		float memcpy_time = 0;
 		float kernel_time = 0;
 
-		double start_time = get_time();
-
 		// エッジのホスト側領域確保
 		int *edge_h = edge_h_mem;
 
 		// エッジのデバイス側領域確保
 		int *edge_d = edge_d_mem;
-
-		double end_time = get_time();
-
-		memcpy_time += (end_time - start_time)*1000;
 
 		// printf("Memcpy Vertices Information HostToDevice: %.2fms\n", (end_time - start_time)*1000);
 
@@ -708,7 +702,7 @@ public:
 						
 						cudaEventRecord(time1, 0);
 
-						CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*1, cudaMemcpyHostToDevice));
+						CHECK(cudaMemcpy(edge_d, edge_h, sizeof(int)*local_edges*2, cudaMemcpyHostToDevice));
 
 						cudaEventRecord(time2, 0);
 						cudaEventSynchronize(time2);
@@ -731,7 +725,7 @@ public:
 						memcpy_time += time12;
 						kernel_time += time23;
 
-						printf("block %d:\nedges=%d\n", count_while, local_edges);
+						// printf("block %d:\nedges=%d\n", count_while, local_edges);
 						// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
 						// printf("Kernel Execution: %.2fms\n", time23);
 						local_edges = 0;
@@ -791,7 +785,7 @@ public:
 					memcpy_time += time12;
 					kernel_time += time23;
 
-					printf("block %d:\nedges=%d\n", count_while, local_edges);
+					// printf("block %d:\nedges=%d\n", count_while, local_edges);
 					// printf("Memcpy Edges HostToDevice: %.2fms\n", time12);
 					// printf("Kernel Execution: %.2fms\n", time23);
 				}

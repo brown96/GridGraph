@@ -559,6 +559,7 @@ public:
 
 		int fin;
 		long offset = 0;
+		double cpu_time = 0;
 		switch(update_mode) {
 		case 0: // source oriented update
 			// threads.clear();
@@ -693,7 +694,7 @@ public:
 
 					// CHECK: start position should be offset % edge_unit
 
-					// start_time = get_time();
+					double start_time = get_time();
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
 					long pos = offset % edge_unit;
 					for (int i = 0; i < edges; i++) {
@@ -705,7 +706,10 @@ public:
 						}
 						sum[dst] = logAdd_c(sum[dst], pagerank[src] - log(degree[src]));
 					}
+					double end_time = get_time();
+					cpu_time += (end_time-start_time)*1000;
 				}
+				printf("CPU calc time: %.2fms\n", cpu_time);
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}

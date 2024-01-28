@@ -64,13 +64,12 @@ float logAdd_c(float log_a, float log_b) {
 }
 
 __device__ void atomicLogAdd(float *address, float val) {
-	int i_val = __float_as_int(val);
-	int tmp0 = 0;
-	int tmp1;
+	int expected = __float_as_int(*address);
+	int oldValue = atomicCAS((int *)address, expected, __float_as_int(logAdd(*address, val)));
 
-	while ((tmp1 = atomicCAS((int *)address, tmp0, i_val)) != tmp0) {
-		tmp0 = tmp1;
-		i_val = __float_as_int(logAdd(val, int_as_float(tmp1)));
+	while (oldValue != expected) {
+		expected = oldValue;
+		oldValue = atomicCAS((int *)address, expected, __float_as_int(logAdd(*address, val)));
 	}
 }
 
@@ -281,7 +280,7 @@ public:
 	template <typename T>
 	void stream_vertices_cpu(float *pagerank, float *sum) {
 		for (int i = 0; i < vertices; i++) {
-			pagerank[i] = logAdd_c(log(0.15), log(0.85)+sum[i]);
+			pagerank[i] = logAdd_c(logf(0.15), logf(0.85) + sum[i]);
 		}
 	}
 
@@ -556,15 +555,6 @@ public:
 			// printf("use buffered I/O\n");
 		}
 
-		float memcpy_time = 0;
-		float kernel_time = 0;
-
-		double start_time = get_time();
-
-		double end_time = get_time();
-
-		memcpy_time += (end_time - start_time)*1000;
-
 		// printf("Memcpy Vertices Information HostToDevice: %.2fms\n", (end_time - start_time)*1000);
 
 		int fin;
@@ -683,9 +673,6 @@ public:
 				// printf("remain_size=%ld\n", 2l*1024l*1024l*1024l - sizeof(T)*vertices - sizeof(unsigned long long int)*active_size*2 - sizeof(T) - sizeof(int)*IOSIZE/edge_unit*2);
 				// printf("edge_size=%ld\n", sizeof(int)*IOSIZE/edge_unit*2);
 
-				int count_while = 0;
-				int local_edges = 0;
-
 				// end_time = get_time();
 				// printf("Initialize Process: %.2fms\n", (end_time - start_time)*1000);
 				
@@ -716,24 +703,13 @@ public:
 						if (src < begin_vid || src >= end_vid) {
 							continue;
 						}
-						sum[dst] += pagerank[src] - log(degree[src]);
+						sum[dst] = logAdd_c(sum[dst], pagerank[src] - log(degree[src]));
 					}
-					
-					local_edges += edges;
-					// end_time = get_time();
-					// printf("Store Edges to Host Memory: %.2fms\n", (end_time - start_time)*1000);
-					// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 				}
-
-				// for (int i = 0; i < count; i++) {
-				// 	CHECK(cudaStreamDestroy(streams[i]));
-				// }
 				write_add(&read_bytes, local_read_bytes);
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
 			// printf("Memcpy Vertices Information DeviceToHost: %.2fms\n", (end_time - start_time)*1000);
-			printf("Total Edge Memcpy time: %.2fms\n", memcpy_time);
-			printf("Total Kernel time: %.2fms\n", kernel_time);
 			break;
 		default:
 			assert(false);

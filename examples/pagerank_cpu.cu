@@ -49,12 +49,13 @@ int main(int argc, char ** argv) {
 	pagerank.fill(0);
 
 	for (int iter=0; iter < iterations; iter++) {
-		sum.fill(0xff800000);
-		// graph.stream_edges_gpu<VertexId>(degree_d, pagerank_d, sum_d);
+		sum.fill(-INFINITY);
 		graph.stream_edges_cpu<VertexId>(degree.data, pagerank.data, sum.data);
-		// graph.stream_vertices_gpu<VertexId>(pagerank_d, sum_d);
+		// for (int i = 0; i < 10; i++) printf("sum[%d]=%f\n", i, sum[i]);
 		graph.stream_vertices_cpu<VertexId>(pagerank.data, sum.data);
+		// for (int i = 0; i < 10; i++) printf("pagerank[%d]=%f\n", i, pagerank[i]);
+		// printf("\n");
 	}
 
-	for (int i = 0; i < 10; i++) printf("pagerank[%d]]=%f\n", i, pagerank[i]);
+	for (int i = 0; i < 10; i++) printf("pagerank[%d]=%.2f\n", i, pagerank[i]);
 }

@@ -63,8 +63,8 @@ int main(int argc, char ** argv) {
 		sum.fill(-INFINITY);
 		CHECK(cudaMemcpy(sum_d, sum.data, sizeof(float)*graph.vertices, cudaMemcpyHostToDevice));
 		graph.stream_edges_gpu<VertexId>(degree_d, pagerank_d, sum_d);
-		CHECK(cudaMemcpy(sum.data, sum_d, sizeof(float)*graph.vertices, cudaMemcpyDeviceToHost));
-		for (int i = 0; i < 10; i++) printf("sum[%d]=%f\n", i, sum[i]);
+		// CHECK(cudaMemcpy(sum.data, sum_d, sizeof(float)*graph.vertices, cudaMemcpyDeviceToHost));
+		// for (int i = 0; i < 10; i++) printf("sum[%d]=%f\n", i, sum[i]);
 		graph.stream_vertices_gpu<VertexId>(pagerank_d, sum_d);
 		// CHECK(cudaMemcpy(pagerank.data, pagerank_d, sizeof(float)*graph.vertices, cudaMemcpyDeviceToHost));
 		// for (int i = 0; i < 10; i++) printf("pagerank[%d]=%f\n", i, pagerank[i]);

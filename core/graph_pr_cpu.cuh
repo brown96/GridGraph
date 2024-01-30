@@ -18,7 +18,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #ifndef GRAPH_H
 #define GRAPH_H
 
-#define MAX_EDGES IOSIZE
+#define MAX_EDGES IOSIZE * 4
 #define BS 1024
 
 #include <cstdio>
@@ -279,9 +279,12 @@ public:
 
 	template <typename T>
 	void stream_vertices_cpu(float *pagerank, float *sum) {
+		double start_time = get_time();
 		for (int i = 0; i < vertices; i++) {
 			pagerank[i] = logAdd_c(logf(0.15), logf(0.85) + sum[i]);
 		}
+		double end_time = get_time();
+		printf("Streaming Vertices on CPU : %.2fms\n", (end_time - start_time)*1000);
 	}
 
 	void set_partition_batch(long bytes) {

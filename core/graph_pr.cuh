@@ -271,8 +271,18 @@ public:
 
 	template <typename T>
 	void stream_vertices_gpu(float *pagerank_d, float *sum_d) {
+		cudaEvent_t time1, time2;
+		cudaEventCreate(&time1);
+		cudaEventCreate(&time2);
+		cudaEventRecord(time1, 0);
 		process_v<<<(vertices + BS - 1) / BS, BS>>>(pagerank_d, sum_d, vertices);
-		cudaDeviceSynchronize();
+		cudaEventRecord(time2, 0);
+		cudaEventSynchronize(time2);
+		float time12;
+		cudaEventElapsedTime(&time12, time1, time2);
+		cudaEventDestroy(time1);
+		cudaEventDestroy(time2);
+		printf("Streaming Vertices time: %.2fms\n", time12);
 	}
 
 	void set_partition_batch(long bytes) {

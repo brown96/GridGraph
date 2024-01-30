@@ -21,7 +21,7 @@ Copyright (c) 2018 Hippolyte Barraud, Tsinghua University
 #define N ((long)1024*1024*512)
 #define BS 1024
 #define GS (N+BS-1)/BS
-#define MAX_EDGES IOSIZE
+#define MAX_EDGES IOSIZE*4
 
 #define WORD_OFFSET(i) (i >> 6)
 #define BIT_OFFSET(i) (i & 0x3f)
@@ -347,6 +347,7 @@ public:
 			// printf("use buffered I/O\n");
 		}
 
+		float process_time = 0;
 		float memcpy_time = 0;
 		float kernel_time = 0;
 
@@ -548,7 +549,7 @@ public:
 
 					// CHECK: start position should be offset % edge_unit
 
-					// start_time = get_time();
+					start_time = get_time();
 					// ホスト領域のソース頂点配列とデスティネーション頂点配列に読み込まれた値を格納
 					long pos = offset % edge_unit;
 					for (int i = 0; i < edges; i++) {
@@ -563,7 +564,8 @@ public:
 					}
 					
 					local_edges += edges;
-					// end_time = get_time();
+					end_time = get_time();
+					process_time += (end_time - start_time) * 1000;
 					// printf("Store Edges to Host Memory: %.2fms\n", (end_time - start_time)*1000);
 					// // process(edge_h, parent_data, bitmap->data, active_out->data, local_value_h, edges);
 				}
@@ -614,6 +616,7 @@ public:
 				post_source_window(std::make_pair(begin_vid, end_vid));
 			}
 			// printf("Memcpy Vertices Information DeviceToHost: %.2fms\n", (end_time - start_time)*1000);
+			printf("Total Edge Process time: %.2fms\n", process_time);
 			printf("Total Edge Memcpy time: %.2fms\n", memcpy_time);
 			printf("Total Kernel time: %.2fms\n", kernel_time);
 			break;

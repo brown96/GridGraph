@@ -17,6 +17,8 @@ Copyright (c) 2014-2015 Xiaowei Zhu, Tsinghua University
 #include "../core/graph_pr.cuh"
 #include "../core/common.h"
 
+#define GNUPLOT_PATH "/mnt/c/gnuplot/bin/gnuplot.exe"
+
 int main(int argc, char ** argv) {
 	if (argc<3) {
 		fprintf(stderr, "usage: pagerank [path] [iterations] [memory budget in GB]\n");
@@ -29,6 +31,7 @@ int main(int argc, char ** argv) {
 	Graph graph(path);
 	graph.set_memory_bytes(memory_bytes);
 	BigVector<VertexId> degree(graph.path+"/degree", graph.vertices);
+	BigVector<VertexId> in_edges(graph.path+"/in_edges", graph.vertices);
 	BigVector<float> pagerank(graph.path+"/pagerank", graph.vertices);
 	BigVector<float> sum(graph.path+"/sum", graph.vertices);
 
@@ -46,6 +49,31 @@ int main(int argc, char ** argv) {
 	);
 	printf("degree calculation used %.2f seconds\n", get_time() - begin_time);
 
+	in_edges.fill(0);
+	graph.stream_edges<VertexId>(
+		[&](Edge & e){
+			write_add(&in_edges[e.target], 1);
+			return 0;
+		}, nullptr, 0, 0
+	);
+	int index;
+	int max = 0;
+	for (int i = 0; i < graph.vertices; i++) {
+		if (max < in_edges[i]) {
+			max = in_edges[i];
+			index = i;
+		}
+	}
+	printf("max=%d\n", max);
+	printf("index=%d\n", index);
+
+	BigVector<VertexId> in_edges_num(graph.path+"/in_edges_num", max+1);
+	in_edges_num.fill(0);
+
+	for (int i = 0; i < graph.vertices; i++) {
+		in_edges_num[in_edges[i]]++;
+	}
+	
 	VertexId *degree_d;
 	CHECK(cudaMalloc((void**)&degree_d, sizeof(VertexId)*graph.vertices));
 	CHECK(cudaMemcpy(degree_d, degree.data, sizeof(VertexId)*graph.vertices, cudaMemcpyHostToDevice));

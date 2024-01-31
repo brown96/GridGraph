@@ -84,14 +84,15 @@ int main(int argc, char ** argv) {
 
 	// --- gnuplotにコマンドを送る --- //
 	fprintf(gp, "set title \"Epinions\"\n");
-	fprintf(gp, "set xrange [0:%d]\n", max); // 範囲の指定
-	fprintf(gp, "set yrange [0.8:2.2]\n");
+	fprintf(gp, "set xrange [0:%d]\n", 4000); // 範囲の指定
+	fprintf(gp, "set yrange [1:%d]\n", in_edges_num[0]);
 	fprintf(gp, "set xlabel \"incoming edges\"\n"); // ラベル表示
 	fprintf(gp, "set ylabel \"nodes\"\n");
+	fprintf(gp, "unset key\n");
 	// 点のプロット
 	fprintf(gp, "plot '-' with points pointtype 6\n");
 	for (int i = 0; i < max + 1; i++) {
-		fprintf(gp, "%d\t%d\n", i, in_edges_num[i]);
+		if (in_edges_num[i] != 0) fprintf(gp, "%d\t%d\n", i, in_edges_num[i]);
 	}
 	fprintf(gp, "e\n");
 	fflush(gp); // バッファに格納されているデータを吐き出す（必須）

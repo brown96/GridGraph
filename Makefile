@@ -1,6 +1,6 @@
 
 ROOT_DIR= $(shell pwd)
-TARGETS= bin/firstPreprocessing bin/preprocess bin/bfs bin/wcc bin/pagerank bin/spmv bin/mis bin/radii bin/bfs_gpu bin/bfs_cpu bin/pagerank_gpu bin/pagerank_cpu
+TARGETS= bin/firstPreprocessing bin/preprocess bin/bfs bin/wcc bin/pagerank bin/spmv bin/mis bin/radii bin/bfs_gpu bin/bfs_cpu bin/pagerank_gpu bin/pagerank_cpu bin/incoming_edges
 
 CXX?= g++
 CXXFLAGS?= -O3 -Wall -std=c++11 -g -fopenmp -I$(ROOT_DIR)
@@ -44,6 +44,9 @@ bin/pagerank_gpu: examples/pagerank.cu core/graph_pr.cuh core/constants.hpp
 	$(NVCC) $(NVCCFLAGS) -o $@ $< $(SYSLIBS)
 
 bin/pagerank_cpu: examples/pagerank_cpu.cu core/graph_pr_cpu.cuh core/constants.hpp
+	$(NVCC) $(NVCCFLAGS) -o $@ $< $(SYSLIBS)
+
+bin/incoming_edges: examples/incoming_edges.cu core/graph_pr.cuh core/constants.hpp
 	$(NVCC) $(NVCCFLAGS) -o $@ $< $(SYSLIBS)
 
 clean:

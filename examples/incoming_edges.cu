@@ -31,6 +31,7 @@ int main(int argc, char ** argv) {
 	Graph graph(path);
 	graph.set_memory_bytes(memory_bytes);
 	BigVector<VertexId> degree(graph.path+"/degree", graph.vertices);
+	BigVector<VertexId> in_edges(graph.path+"/in_edges", graph.vertices);
 	BigVector<float> pagerank(graph.path+"/pagerank", graph.vertices);
 	BigVector<float> sum(graph.path+"/sum", graph.vertices);
 
@@ -47,6 +48,59 @@ int main(int argc, char ** argv) {
 		}, nullptr, 0, 0
 	);
 	printf("degree calculation used %.2f seconds\n", get_time() - begin_time);
+
+	in_edges.fill(0);
+	graph.stream_edges<VertexId>(
+		[&](Edge & e){
+			write_add(&in_edges[e.target], 1);
+			return 0;
+		}, nullptr, 0, 0
+	);
+	int index;
+	int max = 0;
+	for (int i = 0; i < graph.vertices; i++) {
+		if (max < in_edges[i]) {
+			max = in_edges[i];
+			index = i;
+		}
+	}
+	printf("max=%d\n", max);
+	printf("index=%d\n", index);
+
+	BigVector<VertexId> in_edges_num(graph.path+"/in_edges_num", max+1);
+	in_edges_num.fill(0);
+
+	for (int i = 0; i < graph.vertices; i++) {
+		in_edges_num[in_edges[i]]++;
+	}
+
+	FILE *gp;	// For gnuplot
+
+	// gnuplotの起動コマンド
+	if ((gp = popen(GNUPLOT_PATH, "w")) == NULL) {	// gnuplotをパイプで起動
+		fprintf(stderr, "ファイルが見つかりません %s.", GNUPLOT_PATH);
+		exit(EXIT_FAILURE);
+	}
+
+	// --- gnuplotにコマンドを送る --- //
+	fprintf(gp, "set title \"Epinions\"\n");
+	fprintf(gp, "set xrange [0:%d]\n", max); // 範囲の指定
+	fprintf(gp, "set yrange [0.8:2.2]\n");
+	fprintf(gp, "set xlabel \"incoming edges\"\n"); // ラベル表示
+	fprintf(gp, "set ylabel \"nodes\"\n");
+	// 点のプロット
+	fprintf(gp, "plot '-' with points pointtype 6\n");
+	for (int i = 0; i < max + 1; i++) {
+		fprintf(gp, "%d\t%d\n", i, in_edges_num[i]);
+	}
+	fprintf(gp, "e\n");
+	fflush(gp); // バッファに格納されているデータを吐き出す（必須）
+	// system("pause");
+	for (int i = 0; i < 100; i++) {
+		sleep(10);
+	}
+	fprintf(gp, "exit\n"); // gnuplotの終了
+	pclose(gp);
 	
 	VertexId *degree_d;
 	CHECK(cudaMalloc((void**)&degree_d, sizeof(VertexId)*graph.vertices));

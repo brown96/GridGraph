@@ -83,13 +83,14 @@ int main(int argc, char ** argv) {
 	}
 
 	// --- gnuplotにコマンドを送る --- //
-	fprintf(gp, "set title \"Epinions\"\n");
-	fprintf(gp, "set logscale x\n");
-	fprintf(gp, "set xrange [1:%d]\n", max); // 範囲の指定
+	fprintf(gp, "set title \"Twitter\"\n");
+	fprintf(gp, "set logscale\n");
+	fprintf(gp, "set xrange [1:%d]\n", 800000); // 範囲の指定
 	fprintf(gp, "set yrange [1:%d]\n", in_edges_num[0]);
 	fprintf(gp, "set xlabel \"incoming edges\"\n"); // ラベル表示
 	fprintf(gp, "set ylabel \"nodes\"\n");
 	fprintf(gp, "unset key\n");
+	fprintf(gp, "set grid\n");
 	// 点のプロット
 	fprintf(gp, "plot '-' with points pointtype 6\n");
 	for (int i = 0; i < max + 1; i++) {

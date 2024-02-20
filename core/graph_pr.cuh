@@ -61,7 +61,7 @@ __device__ void atomicLogAdd(float *address, float val) {
 
 	while ((tmp1 = atomicCAS((int *)address, tmp0, i_val)) != tmp0) {
 		tmp0 = tmp1;
-		i_val = __float_as_int(logAdd(val, int_as_float(tmp1)));
+		i_val = __float_as_int(logAdd(val, __int_as_float(tmp1)));
 	}
 }
 
